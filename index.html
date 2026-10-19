@@ -1632,7 +1632,32 @@
     box.style.left = (30 + Math.random() * maxX) + 'px';
     box.style.top = (30 + Math.random() * maxY) + 'px';
   }
-  $('saver').addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); closeSaver(); });
+  /* Waking up must not also "tap" whatever is under the finger: the screensaver
+     stays up until the whole tap is over (it receives the click itself), and any
+     click/tap that still arrives in the next moment is swallowed. */
+  var wakeGuardUntil = 0;
+  function swallowTap(e) {
+    if (S.saverOpen || Date.now() < wakeGuardUntil) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      return true;
+    }
+    return false;
+  }
+  $('saver').addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); });
+  $('saver').addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    wakeGuardUntil = Date.now() + 600;
+    closeSaver();
+  });
+  // Capture phase: runs before any button/day handler on the page.
+  ['click', 'pointerup', 'mouseup', 'touchend'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      if (e.target && e.target.closest && e.target.closest('#saver')) return; // the saver's own tap
+      swallowTap(e);
+    }, true);
+  });
 
   /* ==========================================================================
      HOME
