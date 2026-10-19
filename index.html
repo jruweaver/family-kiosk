@@ -46,12 +46,22 @@
           throw new Error('The web app answered with a web page instead of data. Check Deploy ▸ Manage deployments: Execute as "Me", Who has access "Anyone".');
         }
         if (out && (out.code === 'BAD_KEY' || out.code === 'NO_KEY')) showSetup(out.error);
+        else markConnected();
         return out;
       }, function (err) {
         if (timer) clearTimeout(timer);
-        throw new Error('NetworkError: ' + ((err && err.message) || 'Connection failure'));
+        var why = (err && err.message) || 'Connection failure';
+        // Never connected on this device and the browser can't reach it at all: almost always
+        // the deployment settings or the link, not the internet. Show the fix instead of looping.
+        if (!wasConnected() && navigator.onLine !== false) {
+          showSetup('Could not reach the web app (' + why + '). Check: 1) the link ends in /exec (not /dev); ' +
+            '2) Deploy ▸ Manage deployments ▸ Execute as "Me", Who has access "Anyone"; 3) you chose Version: New version and clicked Deploy.');
+        }
+        throw new Error('NetworkError: ' + why);
       });
     }
+    function wasConnected() { try { return localStorage.getItem('fcc.api.ok') === '1'; } catch (e) { return false; } }
+    function markConnected() { try { localStorage.setItem('fcc.api.ok', '1'); } catch (e) { /* ignore */ } }
 
     function runner() {
       var h = {};
@@ -82,7 +92,7 @@
         box.innerHTML = '<div style="width:100%;max-width:520px">' +
           '<h1 style="margin:0 0 6px;font-size:26px">Connect this device</h1>' +
           '<p style="margin:0 0 16px;color:#9AA2B1">Paste the web app link and pairing key from the script editor (run <b>setupSelfHosting</b>), or open the pairing link it printed.</p>' +
-          (msg ? '<p style="margin:0 0 14px;color:#F06A72;font-weight:700"></p>' : '') +
+          (msg ? '<p style="margin:0 0 14px;color:#F06A72;font-weight:700;line-height:1.35"></p>' : '') +
           '<label style="display:block;color:#9AA2B1;font-size:14px;margin:8px 0 4px">Web app link (ends in /exec)</label>' +
           '<input id="fccUrl" style="width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #2B3039;background:#1B1E24;color:inherit;font:inherit" placeholder="https://script.google.com/macros/s/…/exec">' +
           '<label style="display:block;color:#9AA2B1;font-size:14px;margin:12px 0 4px">Pairing key</label>' +
@@ -96,6 +106,7 @@
         document.getElementById('fccSave').onclick = function () {
           var url = document.getElementById('fccUrl').value.trim(), key = document.getElementById('fccKey').value.trim();
           var m = document.getElementById('fccMsg');
+          if (/\/dev(\?|$)/.test(url)) { m.textContent = 'That is the test link (/dev). Use the Web app URL ending in /exec from Deploy ▸ Manage deployments.'; return; }
           if (!/^https:\/\/script\.google(usercontent)?\.com\/.+\/exec/.test(url)) { m.textContent = 'That doesn\'t look like a web app link ending in /exec.'; return; }
           if (!key) { m.textContent = 'Enter the pairing key.'; return; }
           m.textContent = 'Checking…';
@@ -108,7 +119,9 @@
       };
       if (document.body) go(); else document.addEventListener('DOMContentLoaded', go);
     }
-    if (!readCfg()) showSetup();
+    var saved = readCfg();
+    if (!saved) showSetup();
+    else if (/\/dev(\?|$)/.test(saved.url || '')) showSetup('This device was paired with the test link (/dev), which only works for you in the script editor. Paste the Web app URL ending in /exec.');
 
     /* ---------- app-like extras only possible outside Google's frame ---------- */
     document.addEventListener('DOMContentLoaded', function () {
@@ -2030,7 +2043,7 @@
     if (st === 'sending') cls += ' done pending';
     if (st === 'upcoming') cls += ' locked';
     if (st === 'expired') cls += ' missed';
-    var tag = c.kind === 'quest' ? '<span class="tag quest">🔥 Quest</span>' : c.kind === 'weekly' ? '<span class="tag weekly">This week\'s duty</span>' : '';
+    var tag = c.kind === 'quest' ? '<span class="tag quest">🔥 Quest</span>' : c.kind === 'weekly' ? '<span class="tag weekly">' + (c.rotation === 'daily' ? 'Today\'s rotation' : 'This week\'s duty') + '</span>' : '';
     var when = st === 'upcoming' ? '<div class="when">' + esc(c.availabilityLabel) + '</div>'
       : st === 'expired' ? '<div class="when">Missed · closed at ' + esc(c.closes) + '</div>'
         : st === 'done' ? '<div class="when" style="color:var(--ok)">Done' + (c.completedAt ? ' at ' + esc(shortTime(c.completedAt)) : '') + '</div>'
@@ -2519,7 +2532,7 @@
       var adj = S.q.adjustments.filter(function (x) { return x.kid === u.name; });
       var chores = (u.chores || []).map(function (c) {
         var st = c.completed ? ['Done', 'var(--ok)'] : c.status === 'expired' ? ['Missed', 'var(--danger)'] : c.status === 'upcoming' ? [c.availabilityLabel, 'var(--warn)'] : ['To do', 'var(--muted)'];
-        return '<div class="admin-chore"><div class="grow"><div style="font-weight:700">' + esc(c.task) + '</div><div class="st" style="color:' + st[1] + '">' + esc(st[0]) + (c.kind === 'weekly' ? ' · weekly' : c.kind === 'quest' ? ' · quest' : '') + '</div></div>' +
+        return '<div class="admin-chore"><div class="grow"><div style="font-weight:700">' + esc(c.task) + '</div><div class="st" style="color:' + st[1] + '">' + esc(st[0]) + (c.kind === 'weekly' ? (c.rotation === 'daily' ? ' · daily rotation' : ' · weekly') : c.kind === 'quest' ? ' · quest' : '') + '</div></div>' +
           (c.completed ? '<button class="btn small ghost" data-act="aReset" data-kid="' + esc(u.name) + '" data-id="' + esc(c.id) + '" data-t="' + esc(c.task) + '">Undo</button>'
             : '<button class="btn small" data-act="aApprove" data-kid="' + esc(u.name) + '" data-id="' + esc(c.id) + '">Mark done</button>') + '</div>';
       }).join('');
