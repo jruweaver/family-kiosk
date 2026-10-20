@@ -227,6 +227,7 @@
       <button data-tab="lists"><span>🛒</span>Lists</button>
       <button data-tab="meals"><span>🍽️</span>Meals</button>
       <button data-tab="quests"><span>🔥</span>Quests</button>
+      <button data-tab="tasks"><span>🕒</span>Tasks</button>
       <button data-tab="more"><span>📌</span>More</button>
     </nav>
   </div>
@@ -302,7 +303,7 @@
 
   /* ---------- tabs ---------- */
   function render() {
-    var titles = { kids: 'Kids', lists: 'Lists', meals: 'Meals', quests: 'Urgent quests', more: 'More' };
+    var titles = { kids: 'Kids', lists: 'Lists', meals: 'Meals', quests: 'Urgent quests', tasks: 'Task history', more: 'More' };
     $('title').textContent = titles[S.tab];
     Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.classList.toggle('on', b.dataset.tab === S.tab); });
     var m = $('main');
@@ -310,6 +311,7 @@
     else if (S.tab === 'lists') listsRender();
     else if (S.tab === 'meals') m.innerHTML = mealsHtml();
     else if (S.tab === 'quests') m.innerHTML = questsHtml();
+    else if (S.tab === 'tasks') m.innerHTML = tasksHtml();
     else m.innerHTML = moreHtml();
   }
 
@@ -436,6 +438,37 @@
           '<div class="row" style="margin-top:8px"><div class="seg grow"><button class="' + (open ? 'on' : '') + '" data-act="qStatus" data-id="' + esc(x.id) + '" data-v="OPEN">Open</button><button class="' + (!open ? 'on' : '') + '" data-act="qStatus" data-id="' + esc(x.id) + '" data-v="CLOSED">Closed</button></div>' +
           '<button class="btn sm bad" data-act="qDel" data-id="' + esc(x.id) + '" data-n="' + esc(x.name) + '">Delete</button></div></div>';
       }).join('') : '<div class="empty">No quests yet.</div>');
+  }
+
+  /* ---------- Task history: last done, by whom, missed since ---------- */
+  var TH = { tasks: null, area: '', loading: false };
+  function tasksHtml() {
+    if (!TH.tasks) {
+      if (!TH.loading) {
+        TH.loading = true;
+        call('getTaskHistory', S.pin).then(function (r) { TH.tasks = r.tasks; }).catch(fail)
+          .then(function () { TH.loading = false; if (S.tab === 'tasks') render(); });
+      }
+      return '<div class="empty">Loading…</div>';
+    }
+    var areas = [];
+    TH.tasks.forEach(function (t) { if (areas.indexOf(t.area) === -1) areas.push(t.area); });
+    var rank = function (t) { return t.lastDone ? t.lastDone.daysAgo : 1e6; };
+    var list = TH.tasks.filter(function (t) { return !TH.area || t.area === TH.area; })
+      .sort(function (a, b) { return rank(b) - rank(a) || b.missedSince.length - a.missedSince.length; });
+    return '<div class="card"><select class="f" id="thArea"><option value="">All areas — longest since done first</option>' +
+      areas.map(function (ar) { return '<option' + (ar === TH.area ? ' selected' : '') + '>' + esc(ar) + '</option>'; }).join('') + '</select></div>' +
+      '<div class="card">' + list.map(function (t) {
+        var d = t.lastDone ? t.lastDone.daysAgo : null;
+        var when = d === null ? 'Never done' : d <= 0 ? 'Today' : d === 1 ? 'Yesterday' : d + ' days ago';
+        var cls = d === null || d >= 14 ? 'bad' : d >= 7 ? 'warn' : 'ok';
+        var by = {}, order = [];
+        t.missedSince.forEach(function (m) { if (!by[m.member]) { by[m.member] = 0; order.push(m.member); } by[m.member]++; });
+        return '<div class="line"><div class="grow"><b>' + esc(t.task) + '</b><div class="muted">' + esc(t.area) + '</div>' +
+          (order.length ? '<div class="muted">Missed since: ' + order.map(function (w) { return '<b class="bad">' + esc(w) + (by[w] > 1 ? ' ×' + by[w] : '') + '</b>'; }).join(', ') + '</div>' : '') +
+          '</div><div style="text-align:right"><b class="' + cls + '">' + when + '</b>' +
+          (t.lastDone ? '<div class="muted">' + esc(t.lastDone.member) + ' · ' + esc(t.lastDone.dateLabel) + '</div>' : '') + '</div></div>';
+      }).join('') + '</div>';
   }
 
   /* ---------- Alarms (rung by the kiosk) ---------- */
@@ -686,7 +719,7 @@
   }
   document.addEventListener('click', function (e) {
     var tab = e.target.closest('nav button');
-    if (tab) { S.tab = tab.dataset.tab; render(); window.scrollTo(0, 0); return; }
+    if (tab) { S.tab = tab.dataset.tab; if (S.tab === 'tasks') TH.tasks = null; render(); window.scrollTo(0, 0); return; }
     var el = e.target.closest('[data-act]');
     if (!el || el.disabled || el.tagName === 'SELECT') return;
     var fn = ACT[el.dataset.act];
@@ -694,6 +727,7 @@
   });
   document.addEventListener('change', function (e) {
     var el = e.target;
+    if (el.id === 'thArea') { TH.area = el.value; render(); return; }
     if (el.dataset.act === 'area' && el.value) {
       var u = S.admin.adminUserStats[el.dataset.i];
       el.disabled = true;

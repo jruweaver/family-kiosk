@@ -674,6 +674,12 @@
     #alarmScreen .acts { display: flex; gap: 18px; margin-top: 18px; }
     #alarmScreen .acts .btn { min-height: 84px; min-width: 240px; font-size: 26px; border-radius: 22px; }
     #alarmScreen .hint { font-size: 18px; color: var(--muted); }
+    .th-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .th-row td { vertical-align: top; }
+    .th-when { font-weight: 800; white-space: nowrap; }
+    .th-when.warn { color: var(--warn); } .th-when.bad { color: var(--danger); } .th-when.ok { color: var(--ok); }
+    .th-miss { display: inline-block; margin: 0 6px 6px 0; padding: 2px 10px; border-radius: 999px; font-size: 14px; font-weight: 700;
+      background: color-mix(in srgb, var(--danger) 18%, var(--surface)); color: var(--text); }
     .alarm-row { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
     .alarm-row:first-of-type { border-top: 0; }
     .alarm-row .tm { font-family: 'Bricolage Grotesque', 'Atkinson Hyperlegible', system-ui, sans-serif; font-weight: 800; font-size: 34px; min-width: 150px; }
@@ -758,6 +764,7 @@
       </header>
       <nav class="tabs" id="adminTabs">
         <button class="tab" data-act="adminTab" data-tab="today">Today</button>
+        <button class="tab" data-act="adminTab" data-tab="tasks">Task history</button>
         <button class="tab" data-act="adminTab" data-tab="quests">Quests</button>
         <button class="tab" data-act="adminTab" data-tab="rewards">Rewards</button>
         <button class="tab" data-act="adminTab" data-tab="meals">Meals</button>
@@ -2545,7 +2552,7 @@
     var scroll = pane.scrollTop;
     var t = S.adminTab;
     pane.innerHTML = t === 'today' ? adminToday(a) : t === 'quests' ? adminQuests(a) : t === 'rewards' ? adminRewards(a)
-      : t === 'meals' ? adminMeals(a) : t === 'countdowns' ? adminCountdowns(a) : t === 'alarms' ? adminAlarms(a) : t === 'settings' ? adminSettings(a) : adminLedger(a);
+      : t === 'meals' ? adminMeals(a) : t === 'countdowns' ? adminCountdowns(a) : t === 'alarms' ? adminAlarms(a) : t === 'tasks' ? adminTasks() : t === 'settings' ? adminSettings(a) : adminLedger(a);
     pane.scrollTop = scroll;
     renderAdminDock();
   }
@@ -2759,6 +2766,60 @@
     var p = CD_DATE.split('-').map(Number);
     EV = { date: CD_DATE, dpY: p[0], dpM: p[1] - 1, cd: true };
     openModal(modalHead('Pick the day') + '<div id="cdPicker">' + datePickerHtml() + '</div>', { narrow: true });
+  }
+
+  /* ---------- Parents → Task history ---------- */
+  var TH = { tasks: null, area: '', sort: 'oldest', loading: false };
+  function loadTaskHistory() {
+    if (TH.loading) return;
+    TH.loading = true;
+    call('getTaskHistory', S.adminPin).then(function (r) { TH.tasks = r.tasks; }).catch(fail)
+      .then(function () { TH.loading = false; if (S.view === 'admin' && S.adminTab === 'tasks') renderAdmin(); });
+  }
+  function whenLabel(t) {
+    if (!t.lastDone) return ['Never done', 'bad'];
+    var d = t.lastDone.daysAgo;
+    var txt = d <= 0 ? 'Today' : d === 1 ? 'Yesterday' : d + ' days ago';
+    return [txt, d >= 14 ? 'bad' : d >= 7 ? 'warn' : 'ok'];
+  }
+  function missedChips(list) {
+    if (!list.length) return '<span class="muted">—</span>';
+    var by = {}, order = [];
+    list.forEach(function (m) { if (!by[m.member]) { by[m.member] = []; order.push(m.member); } by[m.member].push(m.dateKey); });
+    return order.map(function (who) {
+      var dates = by[who].map(function (k) { return prettyDate(k, { month: 'short', day: 'numeric' }); }).join(', ');
+      return '<span class="th-miss" title="' + esc(dates) + '">' + esc(who) + (by[who].length > 1 ? ' ×' + by[who].length : '') + '</span>';
+    }).join('') + '<div class="muted" style="font-size:13px">' + esc(list.slice(0, 4).map(function (m) { return prettyDate(m.dateKey, { month: 'short', day: 'numeric' }); }).join(', ')) + (list.length > 4 ? '…' : '') + '</div>';
+  }
+  function sortTasks(list, how) {
+    var rank = function (t) { return t.lastDone ? t.lastDone.daysAgo : 1e6; };
+    return list.slice().sort(function (a, b) {
+      if (how === 'oldest') return rank(b) - rank(a) || b.missedSince.length - a.missedSince.length;
+      return a.area < b.area ? -1 : a.area > b.area ? 1 : 0;
+    });
+  }
+  function adminTasks() {
+    if (!TH.tasks) { loadTaskHistory(); return '<div class="empty">Loading task history…</div>'; }
+    var areas = [];
+    TH.tasks.forEach(function (t) { if (areas.indexOf(t.area) === -1) areas.push(t.area); });
+    var list = sortTasks(TH.tasks.filter(function (t) { return !TH.area || t.area === TH.area; }), TH.sort);
+    return '<div class="card"><div class="th-controls">' +
+      '<div class="seg">' + [['oldest', 'Longest since done'], ['area', 'By area']].map(function (o) {
+        return '<button class="' + (TH.sort === o[0] ? 'on' : '') + '" data-act="thSort" data-v="' + o[0] + '">' + o[1] + '</button>';
+      }).join('') + '</div>' +
+      '<select class="field" style="width:auto;min-width:220px" data-act="thArea" id="thArea"><option value="">All areas</option>' +
+      areas.map(function (ar) { return '<option' + (ar === TH.area ? ' selected' : '') + '>' + esc(ar) + '</option>'; }).join('') + '</select>' +
+      '<button class="btn small ghost" data-act="thReload">↻ Refresh</button></div>' +
+      '<table class="table"><thead><tr><th>Task</th><th>Last done</th><th>By</th><th>Missed since then</th></tr></thead><tbody>' +
+      list.map(function (t) {
+        var w = whenLabel(t);
+        var kind = t.kind === 'bonus' ? 'daily task' : t.kind === 'weekly' ? (t.rotation === 'daily' ? 'daily rotation' : 'weekly rotation') : '';
+        return '<tr class="th-row"><td><b>' + esc(t.task) + '</b><div class="muted" style="font-size:14px">' + esc(t.area) + (t.group && t.group !== t.area ? ' › ' + esc(t.group) : '') + (kind ? ' · ' + kind : '') + '</div></td>' +
+          '<td><div class="th-when ' + w[1] + '">' + w[0] + '</div>' + (t.lastDone ? '<div class="muted" style="font-size:14px">' + esc(t.lastDone.dateLabel) + '</div>' : '') + '</td>' +
+          '<td>' + (t.lastDone ? '<b>' + esc(t.lastDone.member) + '</b>' : '<span class="muted">—</span>') + '</td>' +
+          '<td>' + missedChips(t.missedSince) + '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<p class="muted" style="margin:10px 0 0;font-size:14px">"Missed" comes from the nightly check, so it covers area and rotation chores. Shared daily tasks are first-come and are never marked missed.</p></div>';
   }
 
   /* ---------- Parents → Alarms ---------- */
@@ -3019,7 +3080,7 @@
     restock: restock,
     listClear: function () { S.listSel = {}; renderLists(); },
 
-    adminTab: function (el) { S.adminTab = el.dataset.tab; renderAdmin(); $('adminPane').scrollTop = 0; },
+    adminTab: function (el) { S.adminTab = el.dataset.tab; if (el.dataset.tab === 'tasks') TH.tasks = null; renderAdmin(); $('adminPane').scrollTop = 0; },
     adminSave: adminSave,
     adminDiscard: function () { S.q = emptyQueue(); CD_DATE = null; CD_NAME = ''; applySettings(); renderAdmin(); toast('Changes discarded'); },
     adminRefresh: function () { call('adminRefreshCache', S.adminPin).then(function () { refresh(); toast('Caches cleared'); }).catch(fail); },
@@ -3135,6 +3196,8 @@
     },
     aRewardPhoto: function (el) { uploadMedia('reward', el.dataset.id); },
     alEdit: function (el) { alarmForm(el.dataset.id || ''); },
+    thSort: function (el) { TH.sort = el.dataset.v; renderAdmin(); },
+    thReload: function () { TH.tasks = null; renderAdmin(); },
     alToggle: function (el) {
       adminCall('adminSetAlarmEnabled', el.dataset.id, el.dataset.v === '1').then(function () { refresh(); }).catch(fail);
     },
@@ -3154,6 +3217,9 @@
   });
   $('modal').addEventListener('click', function (e) {
     if (e.target === $('modal') && !$('modal').dataset.sticky) closeModal();
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'thArea') { TH.area = e.target.value; renderAdmin(); }
   });
   document.addEventListener('input', function (e) {
     if (e.target && e.target.id === 'cdName') CD_NAME = e.target.value;
