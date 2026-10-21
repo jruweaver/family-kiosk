@@ -2814,7 +2814,7 @@
       list.map(function (t) {
         var w = whenLabel(t);
         var kind = t.kind === 'bonus' ? 'daily task' : t.kind === 'weekly' ? (t.rotation === 'daily' ? 'daily rotation' : 'weekly rotation') : '';
-        return '<tr class="th-row"><td><b>' + esc(t.task) + '</b><div class="muted" style="font-size:14px">' + esc(t.area) + (t.group && t.group !== t.area ? ' › ' + esc(t.group) : '') + (kind ? ' · ' + kind : '') + '</div></td>' +
+        return '<tr class="th-row"><td><b>' + esc(t.task) + '</b>' + (t.person ? ' <span class="chip" style="font-size:13px">' + esc(t.person) + '\'s</span>' : '') + '<div class="muted" style="font-size:14px">' + esc(t.area) + (t.group && t.group !== t.area ? ' › ' + esc(t.group) : '') + (kind ? ' · ' + kind : '') + '</div></td>' +
           '<td><div class="th-when ' + w[1] + '">' + w[0] + '</div>' + (t.lastDone ? '<div class="muted" style="font-size:14px">' + esc(t.lastDone.dateLabel) + '</div>' : '') + '</td>' +
           '<td>' + (t.lastDone ? '<b>' + esc(t.lastDone.member) + '</b>' : '<span class="muted">—</span>') + '</td>' +
           '<td>' + missedChips(t.missedSince) + '</td></tr>';
