@@ -190,6 +190,10 @@
     .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
     .seg button { border: 0; background: var(--card); padding: 7px 12px; font-size: 14px; font-weight: 600; }
     .seg button.on { background: var(--accent); color: var(--accent-text); }
+    .card.ai { border: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+    label.chk { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-top: 1px solid var(--line); }
+    label.chk:first-child { border-top: 0; }
+    label.chk input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--accent); }
     nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 5; display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
     nav button { flex: 1; border: 0; background: none; padding: 10px 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
     nav button.on { color: var(--accent); }
@@ -315,9 +319,52 @@
     else m.innerHTML = moreHtml();
   }
 
+  /* ---------- AI helpers (Quick add, suggestions, meal & quest ideas) ---------- */
+  var AI = { qaText: '', qa: null, mealReq: '', meals: null, mealNote: '', shop: null, questReq: '', quests: null };
+  function aiOn(k) { var a = S.admin; return !!(a && a.ai && a.ai.configured && a.ai.features && a.ai.features[k]); }
+  function aiChecks(list, kind, label) {
+    return list.map(function (x, i) {
+      var off = !!x.problem || x.status === 'needed';
+      var sub = x.problem ? '<div class="warn">' + esc(x.problem) + '</div>'
+        : x.status === 'needed' ? '<div class="muted">Already on the list</div>'
+          : x.status === 'have' ? '<div class="muted">In stock. Check to mark it needed.</div>'
+            : x.current !== undefined ? '<div class="muted">was: ' + esc(x.current || '(blank)') + '</div>' : '';
+      return '<label class="chk"><input type="checkbox" data-ai="' + kind + '" data-i="' + i + '"' + (x._on && !off ? ' checked' : '') + (off ? ' disabled' : '') + '>' +
+        '<div class="grow">' + esc(x.summary) + (x.forMeals ? '<div class="muted">for ' + esc(x.forMeals) + '</div>' : '') + sub + '</div></label>';
+    }).join('') + '<button class="btn primary" style="width:100%;margin-top:8px" data-act="' + kind + 'Apply">' + esc(label) + '</button>';
+  }
+  function aiPick(list) { return (list || []).filter(function (x) { return x._on && !x.problem && x.status !== 'needed'; }); }
+  function aiApplyList(list, el, done) {
+    var pick = aiPick(list);
+    if (!pick.length) return toast('Nothing is checked.', true);
+    el.disabled = true;
+    admin('aiApply', pick).then(function (r) {
+      var bad = r.results.filter(function (x) { return !x.ok; });
+      done(); S.lists = null; render();
+      toast(bad.length ? (r.results.length - bad.length) + ' done · ' + bad.length + ' failed: ' + bad[0].error : 'Done: ' + r.results.length + ' change' + (r.results.length === 1 ? '' : 's'), !!bad.length);
+    }).catch(function (e) { el.disabled = false; fail(e); });
+  }
+  function aiKidsTop() {
+    var html = '';
+    var sg = (S.admin.aiSuggestions && S.admin.aiSuggestions.items) || [];
+    if (sg.length) {
+      html += '<div class="card ai"><h2>✨ Weekly report suggestions</h2><div class="muted">' + esc(S.admin.aiSuggestions.week) + '</div>' + sg.map(function (x) {
+        return '<div class="line" style="align-items:flex-start"><div class="grow"><b>' + esc(x.title) + '</b>' + (x.why ? '<div class="muted">' + esc(x.why) + '</div>' : '') + '</div>' +
+          (x.type === 'tip' ? '<button class="btn sm" data-act="sgDismiss" data-id="' + esc(x.id) + '">Got it</button>'
+            : '<div class="row" style="flex-direction:column;gap:6px"><button class="btn sm primary" data-act="sgApply" data-id="' + esc(x.id) + '">Apply</button><button class="btn sm" data-act="sgDismiss" data-id="' + esc(x.id) + '">Dismiss</button></div>') + '</div>';
+      }).join('') + '</div>';
+    }
+    if (aiOn('aiQuickAdd')) {
+      html += '<div class="card ai"><h2>✨ Quick add</h2><textarea class="f" id="qaText" maxlength="1200" style="margin-top:8px;min-height:64px" placeholder="Dentist Tuesday 3:30 for Madi, add milk and eggs, Noah +50 coins for helping Grandma">' + esc(AI.qaText) + '</textarea>' +
+        '<div class="row" style="margin-top:8px"><button class="btn primary grow" data-act="qaGo">Preview</button>' + (AI.qa ? '<button class="btn" data-act="qaClear">Clear</button>' : '') + '</div>' +
+        (AI.qa ? '<div style="margin-top:6px">' + aiChecks(AI.qa, 'qa', 'Apply checked') + '</div>' : '<p class="muted" style="margin:8px 0 0">Nothing changes until you tap Apply.</p>') + '</div>';
+    }
+    return html;
+  }
+
   /* ---------- Kids ---------- */
   function kidsHtml() {
-    return S.admin.adminUserStats.map(function (u, i) {
+    return aiKidsTop() + S.admin.adminUserStats.map(function (u, i) {
       var changed = u.overridden && u.scheduledRoom && u.scheduledRoom !== 'None' && u.scheduledRoom !== u.room;
       var rooms = (u.rooms || S.admin.rooms).filter(function (r) { return r !== u.room && !(changed && r === u.scheduledRoom); });
       var chores = (u.chores || []).map(function (c) {
@@ -414,7 +461,16 @@
     var types = m.mealTypes && m.mealTypes.length ? m.mealTypes : ['Breakfast', 'Lunch', 'Dinner'];
     var start = new Date().getDay();
     var order = DAYS.slice(start).concat(DAYS.slice(0, start));
-    return '<p class="muted" style="margin:0 6px 10px">Changes save when you leave a box.</p>' + order.map(function (d, idx) {
+    var bar = '';
+    if (aiOn('aiMealIdeas') || aiOn('aiMealShopping')) {
+      bar = '<div class="card ai">' +
+        (aiOn('aiMealIdeas') ? '<h2>✨ Meal ideas</h2><input class="f" id="aiMealReq" style="margin-top:8px" maxlength="300" placeholder="Optional: cheap week, more chicken…" value="' + esc(AI.mealReq) + '">' +
+          '<button class="btn primary" style="width:100%;margin-top:8px" data-act="aiMeals">Suggest meals for the week</button>' +
+          (AI.meals ? (AI.mealNote ? '<p class="muted">' + esc(AI.mealNote) + '</p>' : '') + aiChecks(AI.meals, 'meals', 'Save checked meals') : '') : '') +
+        (aiOn('aiMealShopping') ? '<button class="btn" style="width:100%;margin-top:10px" data-act="aiShop">🛒 Shopping list from these meals</button>' +
+          (AI.shop ? '<div style="margin-top:8px">' + aiChecks(AI.shop, 'shop', 'Add to the shopping list') + '</div>' : '') : '') + '</div>';
+    }
+    return bar + '<p class="muted" style="margin:0 6px 10px">Changes save when you leave a box.</p>' + order.map(function (d, idx) {
       var day = (m.days || []).filter(function (x) { return x.day === d; })[0] || { meals: {} };
       return '<div class="card"><h2>' + d + (idx === 0 ? ' <span class="tag">today</span>' : '') + '</h2>' + types.map(function (t) {
         return '<label class="l">' + esc(t) + '</label><input class="f" data-meal="' + esc(t) + '" data-day="' + d + '" value="' + esc(day.meals[t] || '') + '" data-orig="' + esc(day.meals[t] || '') + '">';
@@ -432,6 +488,13 @@
       '<div class="grow"><label class="l">Tickets</label><input class="f" id="qVch" type="number" inputmode="numeric" value="0"></div>' +
       '<div class="grow"><label class="l">Emoji</label><input class="f" id="qIcon" maxlength="300" value="🔥"></div></div>' +
       '<button class="btn primary" style="margin-top:10px;width:100%" data-act="qAdd">Add quest (open now)</button></div>' +
+      (aiOn('aiQuestIdeas') ? '<div class="card ai"><h2>✨ Quest ideas</h2><input class="f" id="aiQuestReq" style="margin-top:8px" maxlength="300" placeholder="Optional theme: Halloween, the garage…" value="' + esc(AI.questReq) + '">' +
+        '<button class="btn primary" style="width:100%;margin-top:8px" data-act="aiQuests">Get ideas</button>' +
+        (AI.quests ? AI.quests.map(function (x, i) {
+          return '<div class="line" style="align-items:flex-start"><div style="font-size:24px">' + esc(x.icon) + '</div><div class="grow"><b>' + esc(x.name) + '</b> <span class="muted">' + x.points + ' coins' + (x.vouchers ? ' · ' + x.vouchers + ' tickets' : '') + '</span>' +
+            '<div>' + esc(x.obj) + '</div><div class="muted">' + esc(x.desc) + '</div></div>' +
+            (x._added ? '<span class="tag">added</span>' : '<button class="btn sm" data-act="aiQuestAdd" data-i="' + i + '">Add</button>') + '</div>';
+        }).join('') : '') + '</div>' : '') +
       (q.length ? q.map(function (x) {
         var open = x.status === 'OPEN' || x.state === 'open';
         return '<div class="card"><div class="row"><div class="grow"><b>' + esc(x.name) + '</b><div class="muted">' + esc(x.obj || x.desc) + '</div><div class="muted">' + x.points + ' coins' + (x.vouchers ? ' · ' + x.vouchers + ' tickets' : '') + '</div></div></div>' +
@@ -572,7 +635,33 @@
     return alarmsHtml() + '<div class="card"><h2>Bulletin board</h2><textarea class="f" id="bulletin" maxlength="300" style="margin-top:8px">' + esc(s.bulletin) + '</textarea>' +
       '<div class="row" style="margin-top:8px"><button class="btn primary" data-act="bulletinSave">Save message</button><button class="btn" data-act="bulletinClear">Clear</button></div></div>' +
       '<div class="card"><h2>Rewards to hand over</h2>' + (owed.length ? owed.map(line).join('') : '<div class="empty">Nothing owed.</div>') +
-      (given.length ? '<h3>Recently given</h3>' + given.map(line).join('') : '') + '</div>' + summaryHtml();
+      (given.length ? '<h3>Recently given</h3>' + given.map(line).join('') : '') + '</div>' + summaryHtml() + aiFeaturesHtml();
+  }
+
+  /* ---------- AI feature switches ---------- */
+  var AI_SWITCHES = [
+    ['aiQuickAdd', '✨ Quick add', 'Type a note → events, shopping, coins, meals'],
+    ['aiWeeklyReport', '📊 Weekly report', 'Email with suggestions you apply in one tap'],
+    ['aiMealIdeas', '🍽️ Meal ideas', 'Suggestions for the week\'s meals'],
+    ['aiMealShopping', '🛒 Shopping from meals', 'Ingredients → shopping list'],
+    ['aiMorningNotes', '🌅 Morning notes', 'A short line on each person\'s kiosk screen'],
+    ['aiQuestIdeas', '🔥 Quest ideas', 'Drafts aimed at skipped tasks']
+  ];
+  function isOnVal(v) { return /^(enabled|yes|true|on)$/i.test(String(v || '')); }
+  function aiFeaturesHtml() {
+    var s = S.admin.settings || {};
+    var day = String(s.weeklyReportDay || 'Sunday').slice(0, 3).toLowerCase();
+    return '<div class="card"><h2>AI features</h2><p class="muted" style="margin:4px 0 0">Uses the AI service and key above. Nothing changes until a parent taps Apply or Add.</p>' +
+      AI_SWITCHES.map(function (f) {
+        var on = isOnVal(s[f[0]]);
+        return '<div class="line"><div class="grow"><b>' + f[1] + '</b><div class="muted">' + f[2] + '</div></div>' +
+          '<div class="seg" data-sw="' + f[0] + '"><button class="' + (on ? 'on' : '') + '" data-act="swPick" data-v="ENABLED">On</button><button class="' + (!on ? 'on' : '') + '" data-act="swPick" data-v="DISABLED">Off</button></div></div>';
+      }).join('') +
+      '<label class="l">Weekly report day</label><select class="f" id="aiDay">' + DAYS.map(function (d) { return '<option' + (d.slice(0, 3).toLowerCase() === day ? ' selected' : '') + '>' + d + '</option>'; }).join('') + '</select>' +
+      '<label class="l">Food preferences for meal ideas</label><textarea class="f" id="aiPrefs" maxlength="300" placeholder="No seafood. Kids like pasta. 30-minute weeknight dinners.">' + esc(s.mealPrefs || '') + '</textarea>' +
+      '<div class="row" style="margin-top:10px"><button class="btn primary" data-act="aiSave">Save</button>' +
+      (aiOn('aiWeeklyReport') ? '<button class="btn" data-act="weeklyNow">📊 Send report</button>' : '') +
+      (aiOn('aiMorningNotes') ? '<button class="btn" data-act="notesNow">🌅 Redo notes</button>' : '') + '</div></div>';
   }
 
   /* ---------- Daily summary email ---------- */
@@ -691,6 +780,87 @@
       if (!confirm('Remove the bulletin message?')) return;
       admin('adminSaveSettings', { bulletin: '' }).then(function () { toast('Message cleared'); }).catch(fail);
     },
+    swPick: function (el) {
+      Array.prototype.forEach.call(el.parentNode.querySelectorAll('button'), function (b) { b.classList.toggle('on', b === el); });
+    },
+    aiSave: function (el) {
+      var data = { weeklyReportDay: $('aiDay').value, mealPrefs: $('aiPrefs').value.trim() };
+      Array.prototype.forEach.call(document.querySelectorAll('[data-sw]'), function (g) {
+        var on = g.querySelector('button.on');
+        data[g.dataset.sw] = on ? on.dataset.v : 'DISABLED';
+      });
+      el.disabled = true;
+      admin('adminSaveSettings', data).then(function () { toast('AI settings saved'); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    weeklyNow: function (el) {
+      el.disabled = true; toast('Writing the weekly report…');
+      call('adminSendWeeklyNow', S.pin).then(function (r) {
+        var x = r.result || {};
+        if (r.admin) S.admin = r.admin;
+        el.disabled = false;
+        toast(x.sent ? 'Sent · ' + x.suggestions + ' suggestion' + (x.suggestions === 1 ? '' : 's') + (x.aiError ? ' — AI failed: ' + x.aiError : '') : (x.reason || 'Not sent'), !x.sent || !!x.aiError);
+      }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    notesNow: function (el) {
+      el.disabled = true; toast('Writing morning notes…');
+      call('adminRefreshNotes', S.pin).then(function (r) { el.disabled = false; toast('Notes written for ' + r.result.count + ' people'); })
+        .catch(function (e) { el.disabled = false; fail(e); });
+    },
+    qaGo: function (el) {
+      var t = $('qaText').value.trim();
+      AI.qaText = t;
+      if (!t) return toast('Type something first.', true);
+      el.disabled = true; toast('Reading your note…');
+      call('aiQuickAdd', S.pin, t).then(function (r) {
+        AI.qa = r.actions.map(function (x) { x._on = !x.problem; return x; });
+        if (!AI.qa.length) toast('Nothing to add was found in that note.', true);
+        render();
+      }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    qaClear: function () { AI.qa = null; AI.qaText = ''; render(); },
+    qaApply: function (el) { aiApplyList(AI.qa, el, function () { AI.qa = null; AI.qaText = ''; }); },
+    shopApply: function (el) { aiApplyList(AI.shop, el, function () { AI.shop = null; }); },
+    sgApply: function (el) {
+      el.disabled = true;
+      admin('adminApplySuggestion', el.dataset.id).then(function (r) { toast('Applied: ' + r.applied); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    sgDismiss: function (el) { el.disabled = true; admin('adminDismissSuggestion', el.dataset.id).catch(fail); },
+    aiMeals: function (el) {
+      AI.mealReq = $('aiMealReq').value.trim();
+      el.disabled = true; toast('Planning meals…');
+      call('aiSuggestMeals', S.pin, AI.mealReq).then(function (r) {
+        AI.meals = r.suggestions.map(function (x) { x._on = true; x.summary = x.day + ' ' + x.meal.toLowerCase() + ': ' + x.suggested; return x; });
+        AI.mealNote = r.note || '';
+        render();
+      }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    mealsApply: function (el) {
+      var pick = aiPick(AI.meals);
+      if (!pick.length) return toast('Nothing is checked.', true);
+      var data = {};
+      pick.forEach(function (x) { data[x.meal] = data[x.meal] || {}; data[x.meal][x.day] = x.suggested; });
+      el.disabled = true;
+      admin('adminSaveMeals', data).then(function () { AI.meals = null; AI.mealNote = ''; render(); toast(pick.length + ' meal' + (pick.length === 1 ? '' : 's') + ' saved'); })
+        .catch(function (e) { el.disabled = false; fail(e); });
+    },
+    aiShop: function (el) {
+      el.disabled = true; toast('Working out the ingredients…');
+      call('aiMealShopping', S.pin, null).then(function (r) {
+        AI.shop = r.items.map(function (x) { x._on = x.status === 'new'; return x; });
+        render();
+      }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    aiQuests: function (el) {
+      AI.questReq = $('aiQuestReq').value.trim();
+      el.disabled = true; toast('Thinking up quests…');
+      call('aiSuggestQuests', S.pin, AI.questReq).then(function (r) { AI.quests = r.quests; render(); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    aiQuestAdd: function (el) {
+      var q = AI.quests[Number(el.dataset.i)];
+      el.disabled = true;
+      admin('adminAddQuest', { name: q.name, desc: q.desc, obj: q.obj, points: q.points, vouchers: q.vouchers, icon: q.icon })
+        .then(function () { q._added = true; render(); toast('Quest added and open'); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
     smMode: function (el) {
       Array.prototype.forEach.call($('smMode').querySelectorAll('button'), function (b) { b.classList.toggle('on', b === el); });
     },
@@ -765,9 +935,20 @@
     var fn = ACT[el.dataset.act];
     if (fn) fn(el, e);
   });
+  document.addEventListener('input', function (e) {
+    var id = e.target && e.target.id;
+    if (id === 'qaText') AI.qaText = e.target.value;
+    else if (id === 'aiMealReq') AI.mealReq = e.target.value;
+    else if (id === 'aiQuestReq') AI.questReq = e.target.value;
+  });
   document.addEventListener('change', function (e) {
     var el = e.target;
     if (el.id === 'thArea') { TH.area = el.value; render(); return; }
+    if (el.dataset && el.dataset.ai) {
+      var list = el.dataset.ai === 'qa' ? AI.qa : el.dataset.ai === 'meals' ? AI.meals : AI.shop;
+      if (list && list[Number(el.dataset.i)]) list[Number(el.dataset.i)]._on = el.checked;
+      return;
+    }
     if (el.dataset.act === 'area' && el.value) {
       var u = S.admin.adminUserStats[el.dataset.i];
       el.disabled = true;

@@ -314,6 +314,15 @@
     .kid-bulletin .big { font-size: 40px; }
     .kid-bulletin .tx { flex: 1; font-size: 24px; font-weight: 800; line-height: 1.25; }
     .kid-bulletin .tx small { display: block; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--warn); }
+    .kid-note { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; padding: 14px 20px; border-radius: 20px; font-size: 22px; font-weight: 700; line-height: 1.3;
+      background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+    .kid-note .big { font-size: 34px; }
+    .ai-card { border: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+    .ai-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); font-size: 18px; }
+    .ai-row:first-child { border-top: 0; }
+    .ai-row input[type=checkbox] { width: 26px; height: 26px; margin-top: 1px; flex: none; accent-color: var(--accent); }
+    .ai-row .warn { color: var(--warn); font-size: 15px; font-weight: 700; }
+    .ai-row .btn { flex: none; }
     #saverNote { margin-top: 14px; font-size: 24px; font-weight: 800; color: var(--warn); max-width: 560px; }
     .players { display: flex; flex-direction: column; gap: 8px; }
     .player {
@@ -2089,6 +2098,7 @@
   function kidChores(u) {
     var t = u.today;
     var html = '';
+    if (u.aiNote) html += '<div class="kid-note"><span class="big">🌅</span><span>' + esc(u.aiNote) + '</span></div>';
     var note = String(settings().bulletin || '').trim();
     if (note && !bulletinSeenBy(u.name, note)) {
       html += '<div class="kid-bulletin"><span class="big">📌</span><div class="tx"><small>Message from the board</small>' + esc(note) + '</div>' +
@@ -2517,7 +2527,7 @@
       title: 'Parents', enter: true, hint: 'Enter the parent PIN',
       submit: function (pin) {
         return call('verifyAdminPin', pin).then(function (r) {
-          S.admin = r.admin; S.adminPin = pin; S.adminTab = 'today'; S.q = emptyQueue();
+          S.admin = r.admin; S.adminPin = pin; S.adminTab = 'today'; S.q = emptyQueue(); AI = aiBlank();
           show('admin');
         });
       }
@@ -2559,7 +2569,7 @@
 
   function adminToday(a) {
     var rooms = a.rooms || [];
-    return '<div class="admin-users">' + a.adminUserStats.map(function (u, i) {
+    return aiTodayHtml(a) + '<div class="admin-users">' + a.adminUserStats.map(function (u, i) {
       var queuedRoom = S.q.overrides[u.name];
       var adj = S.q.adjustments.filter(function (x) { return x.kid === u.name; });
       var chores = (u.chores || []).map(function (c) {
@@ -2693,6 +2703,13 @@
     }).join('');
     return '<div class="card"><h3 style="margin-bottom:8px">Urgent quests</h3><p class="muted" style="margin:0 0 10px">Open quests show on every kid\'s board once their chores are done. The first kid to claim one gets it.</p>' +
       '<table class="table"><thead><tr><th>Quest</th><th>Pays</th><th>Status</th><th></th></tr></thead><tbody>' + (rows + added || '<tr><td colspan="4" class="muted">No quests yet.</td></tr>') + '</tbody></table></div>' +
+      (aiOn(a, 'aiQuestIdeas') ? '<div class="card ai-card"><h3 style="margin-bottom:6px">✨ Quest ideas</h3><p class="muted" style="margin:0 0 10px">Drafts aimed at tasks that keep getting skipped. Add the ones you like, then save.</p>' +
+        '<div style="display:flex;gap:10px"><input class="field" id="aiQuestReq" maxlength="300" placeholder="Optional theme: Halloween, the garage, the dogs…" value="' + esc(AI.questReq) + '"><button class="btn primary" data-act="aiQuests" style="flex:none">Get ideas</button></div>' +
+        (AI.quests ? '<div style="margin-top:8px">' + AI.quests.map(function (q, i) {
+          return '<div class="ai-row"><div class="media" style="width:44px;height:44px;font-size:26px;flex:none">' + icon(q.icon, '🔥') + '</div><div class="grow"><b>' + esc(q.name) + '</b> <span class="muted num">' + q.points + ' 🪙' + (q.vouchers ? ' · ' + q.vouchers + ' 🎟️' : '') + '</span>' +
+            '<div style="font-size:16px">' + esc(q.obj) + '</div><div class="muted" style="font-size:14px">' + esc(q.desc) + '</div></div>' +
+            (q._added ? '<span class="chip">Added</span>' : '<button class="btn small" data-act="aiQuestAdd" data-i="' + i + '">Add to changes</button>') + '</div>';
+        }).join('') + '</div>' : '') + '</div>' : '') +
       '<div class="card"><h3 style="margin-bottom:12px">New quest</h3><div class="grid2">' +
       '<div><label class="label" for="nqName">Name</label><input class="field" id="nqName" maxlength="80" placeholder="Garage gauntlet"></div>' +
       '<div><label class="label" for="nqIcon">Emoji or image link</label><input class="field" id="nqIcon" maxlength="300" placeholder="🔥"></div>' +
@@ -2740,7 +2757,14 @@
       var day = (m.days || []).filter(function (x) { return x.day === d; })[0];
       return day ? (day.meals[mt] || '') : '';
     }
-    return '<div class="card" style="overflow-x:auto"><table class="meal-table"><thead><tr><th></th>' + days.map(function (d) { return '<th>' + d.slice(0, 3) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+    var bar = '';
+    if (aiOn(a, 'aiMealIdeas') || aiOn(a, 'aiMealShopping')) {
+      bar = '<div class="card ai-card"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' +
+        (aiOn(a, 'aiMealIdeas') ? '<input class="field" id="aiMealReq" style="flex:1;min-width:240px" maxlength="300" placeholder="Optional: cheap week, more chicken, no oven…" value="' + esc(AI.mealReq) + '"><button class="btn primary" data-act="aiMeals" style="flex:none">✨ Suggest meals</button>' : '') +
+        (aiOn(a, 'aiMealShopping') ? '<button class="btn" data-act="aiShop" style="flex:none">🛒 Shopping list from meals</button>' : '') + '</div>' +
+        (AI.mealNote ? '<p class="muted" style="margin:10px 0 0">' + esc(AI.mealNote) + '</p>' : '') + '</div>';
+    }
+    return bar + '<div class="card" style="overflow-x:auto"><table class="meal-table"><thead><tr><th></th>' + days.map(function (d) { return '<th>' + d.slice(0, 3) + '</th>'; }).join('') + '</tr></thead><tbody>' +
       types.map(function (mt) {
         return '<tr><th>' + esc(mt) + '</th>' + days.map(function (d) {
           var queued = S.q.meals[mt] && S.q.meals[mt][d] !== undefined;
@@ -2766,6 +2790,55 @@
     var p = CD_DATE.split('-').map(Number);
     EV = { date: CD_DATE, dpY: p[0], dpM: p[1] - 1, cd: true };
     openModal(modalHead('Pick the day') + '<div id="cdPicker">' + datePickerHtml() + '</div>', { narrow: true });
+  }
+
+  /* ---------- Parents → AI helpers (Quick add, suggestions, meal & quest ideas) ---------- */
+  function aiBlank() { return { qaText: '', qa: null, mealReq: '', mealNote: '', questReq: '', quests: null, shop: null }; }
+  var AI = aiBlank();
+  function aiOn(a, k) { return !!(a && a.ai && a.ai.configured && a.ai.features && a.ai.features[k]); }
+  function aiChecklist(list, act, label) {
+    return '<div style="margin-top:12px">' + list.map(function (x, i) {
+      var off = !!x.problem || x.status === 'needed';
+      var sub = x.problem ? '<div class="warn">' + esc(x.problem) + '</div>'
+        : x.status === 'needed' ? '<div class="muted" style="font-size:14px">Already on the list</div>'
+          : x.status === 'have' ? '<div class="muted" style="font-size:14px">You have this (In Stock). Check it to mark it needed.</div>' : '';
+      return '<label class="ai-row"><input type="checkbox" data-ai="' + act + '" data-i="' + i + '"' + (x._on && !off ? ' checked' : '') + (off ? ' disabled' : '') + '>' +
+        '<span class="grow">' + esc(x.summary) + (x.forMeals ? '<div class="muted" style="font-size:14px">for ' + esc(x.forMeals) + '</div>' : '') + sub + '</span></label>';
+    }).join('') + '<div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn primary" data-act="' + act + '">' + esc(label) + '</button></div></div>';
+  }
+  function aiApplyList(list, el, done) {
+    var pick = (list || []).filter(function (x) { return x._on && !x.problem && x.status !== 'needed'; });
+    if (!pick.length) { toast('Nothing is checked.', true); return; }
+    el.disabled = true;
+    adminCall('aiApply', pick).then(function (r) {
+      var bad = r.results.filter(function (x) { return !x.ok; });
+      done();
+      if (S.view === 'admin') renderAdmin();
+      refresh();
+      toast(bad.length ? (r.results.length - bad.length) + ' done · ' + bad.length + ' failed: ' + bad[0].error
+        : 'Done: ' + r.results.length + ' change' + (r.results.length === 1 ? '' : 's') + ' made', !!bad.length);
+    }).catch(fail).then(function () { el.disabled = false; });
+  }
+  function aiTodayHtml(a) {
+    var html = '';
+    var sg = (a.aiSuggestions && a.aiSuggestions.items) || [];
+    if (sg.length) {
+      html += '<div class="card ai-card"><h3 style="margin-bottom:4px">✨ Suggestions from the weekly report</h3><div class="muted" style="margin-bottom:6px">' + esc(a.aiSuggestions.week) + '</div>' +
+        sg.map(function (x) {
+          return '<div class="ai-row"><div class="grow"><b>' + esc(x.title) + '</b>' + (x.why ? '<div class="muted" style="font-size:15px">' + esc(x.why) + '</div>' : '') + '</div>' +
+            (x.type === 'tip' ? '<button class="btn small" data-act="sgDismiss" data-id="' + esc(x.id) + '">Got it</button>'
+              : '<button class="btn small primary" data-act="sgApply" data-id="' + esc(x.id) + '">Apply</button><button class="btn small ghost" data-act="sgDismiss" data-id="' + esc(x.id) + '">Dismiss</button>') + '</div>';
+        }).join('') + '</div>';
+    }
+    if (aiOn(a, 'aiQuickAdd')) {
+      html += '<div class="card ai-card"><h3 style="margin-bottom:8px">✨ Quick add</h3>' +
+        '<textarea class="field" id="qaText" rows="2" maxlength="1200" placeholder="Dentist Tuesday 3:30 for Madi, add milk and eggs, Noah gets 50 coins for helping Grandma">' + esc(AI.qaText) + '</textarea>' +
+        '<div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap"><button class="btn primary" data-act="qaGo">Preview</button>' +
+        (AI.qa ? '<button class="btn ghost" data-act="qaClear">Clear</button>' : '') +
+        '<span class="muted" style="font-size:14px">Events, countdowns, shopping, coins, meals or the bulletin. Nothing changes until you tap Apply.</span></div>' +
+        (AI.qa ? aiChecklist(AI.qa, 'qaApply', 'Apply checked') : '') + '</div>';
+    }
+    return html;
   }
 
   /* ---------- Parents → Task history ---------- */
@@ -2939,13 +3012,25 @@
     ['summaryTime', 'Send the summary after (e.g. 8:00 PM)', 'text'],
     ['aiService', 'AI service (website, e.g. anthropic.com, openai.com, gemini.google.com)', 'text'],
     ['aiKey', 'AI API key', 'text'],
-    ['aiModel', 'AI model (optional — blank picks a small one)', 'text']
+    ['aiModel', 'AI model (optional — blank picks a small one)', 'text'],
+    ['_aiHead', 'AI features', 'heading'],
+    ['aiQuickAdd', '✨ Quick add (type a note → events, shopping, coins, meals)', 'toggle'],
+    ['aiWeeklyReport', '📊 Weekly report email with suggestions', 'toggle'],
+    ['weeklyReportDay', 'Weekly report day', 'weekday'],
+    ['aiMealIdeas', '🍽️ Meal suggestions for the week', 'toggle'],
+    ['aiMealShopping', '🛒 Shopping list from meals', 'toggle'],
+    ['aiMorningNotes', '🌅 Morning note on each person\'s screen', 'toggle'],
+    ['aiQuestIdeas', '🔥 Quest ideas', 'toggle'],
+    ['mealPrefs', 'Food preferences for meal ideas (allergies, likes, budget, cooking time)', 'textarea']
   ];
   function adminSettings(a) {
     var s = a.settings || {};
     function cur(k) { return S.q.settings[k] !== undefined ? S.q.settings[k] : s[k]; }
     function isOn(v) { return v === true || /^(enabled|yes|true|on)$/i.test(String(v || '')); }
     return '<div class="card"><div class="grid2">' + SETTING_FIELDS.map(function (f) {
+      if (f[2] === 'heading') {
+        return '<div style="grid-column:1/-1;margin-top:10px"><h3 style="margin:0">' + esc(f[1]) + '</h3><p class="muted" style="margin:4px 0 0;font-size:14px">Each one uses the AI service and key above and can be turned on or off. Nothing is changed until a parent taps Apply or Add.</p></div>';
+      }
       var k = f[0], v = cur(k), queued = S.q.settings[k] !== undefined ? ' queued' : '';
       var input;
       if (f[2] === 'textarea') input = '<textarea class="field' + queued + '" data-q="setting" data-k="' + k + '" maxlength="300">' + esc(v) + '</textarea>';
@@ -2958,6 +3043,9 @@
         var on = o[0] === 'AI Generated' ? /^ai/.test(cur) : o[0] === 'Basic' ? /^basic/.test(cur) : !/^(ai|basic)/.test(cur);
         return '<button class="' + (on ? 'on' : '') + '" data-act="setToggle" data-k="summaryMode" data-v="' + o[0] + '">' + o[1] + '</button>';
       }).join('') + '</div>';
+      else if (f[2] === 'weekday') input = '<div class="seg' + queued + '">' + WEEKDAYS.map(function (d) {
+        return '<button class="' + (String(v || 'Sunday').toLowerCase().slice(0, 3) === d.toLowerCase().slice(0, 3) ? 'on' : '') + '" data-act="setToggle" data-k="' + k + '" data-v="' + d + '">' + d.slice(0, 3) + '</button>';
+      }).join('') + '</div>';
       else if (f[2] === 'tz') input = '<div class="seg' + queued + '">' + [['America/New_York', 'Eastern'], ['America/Chicago', 'Central'], ['America/Denver', 'Mountain'], ['America/Los_Angeles', 'Pacific']].map(function (o) {
         return '<button class="' + (v === o[0] ? 'on' : '') + '" data-act="setToggle" data-k="timeZone" data-v="' + o[0] + '">' + o[1] + '</button>';
       }).join('') + '</div>';
@@ -2965,10 +3053,12 @@
       if (k === 'background' || k === 'screensaverImage') {
         input = '<div style="display:flex;gap:10px;align-items:center"><div style="flex:1">' + input + '</div><button class="btn small" data-act="aUploadSetting" data-k="' + k + '">📷 Upload photo</button></div>';
       }
-      var wide = f[2] === 'textarea' || f[2] === 'theme' || /calendar|Image|background|summaryEmails|aiService/.test(k) ? ' style="grid-column:1/-1"' : '';
+      var wide = f[2] === 'textarea' || f[2] === 'theme' || /calendar|Image|background|summaryEmails|aiService|weeklyReportDay/.test(k) ? ' style="grid-column:1/-1"' : '';
       return '<div' + wide + '><span class="label">' + esc(f[1]) + '</span>' + input + '</div>';
     }).join('') + '</div>' +
       '<div style="display:flex;gap:12px;align-items:center;margin-top:16px;flex-wrap:wrap"><button class="btn" data-act="sendSummary">✉️ Send a test summary now</button>' +
+      (aiOn(a, 'aiWeeklyReport') ? '<button class="btn" data-act="sendWeekly">📊 Send the weekly report now</button>' : '') +
+      (aiOn(a, 'aiMorningNotes') ? '<button class="btn" data-act="refreshNotes">🌅 Rewrite today\'s morning notes</button>' : '') +
       '<span class="muted" style="font-size:14px">Uses the saved settings above. The daily one goes out automatically after the set time once <b>setupTriggers</b> has been run in the script editor.</span></div></div>';
   }
 
@@ -3219,6 +3309,70 @@
       }).catch(fail).then(function () { el.disabled = false; });
     },
     thReload: function () { TH.tasks = null; renderAdmin(); },
+    sendWeekly: function (el) {
+      if (dirtyCount() > 0) { toast('Save your changes first, then send the report.', true); return; }
+      el.disabled = true; toast('Writing the weekly report…');
+      call('adminSendWeeklyNow', S.adminPin).then(function (r) {
+        var x = r.result || {};
+        if (r.admin) S.admin = r.admin;
+        toast(x.sent ? 'Sent to ' + (x.to || []).join(', ') + ' · ' + x.suggestions + ' suggestion' + (x.suggestions === 1 ? '' : 's') + (x.aiError ? ' — AI failed: ' + x.aiError : '') : (x.reason || 'Not sent'), !x.sent || !!x.aiError);
+      }).catch(fail).then(function () { el.disabled = false; });
+    },
+    refreshNotes: function (el) {
+      el.disabled = true; toast('Writing morning notes…');
+      call('adminRefreshNotes', S.adminPin).then(function (r) { toast('Morning notes written for ' + r.result.count + ' people'); refresh(); })
+        .catch(fail).then(function () { el.disabled = false; });
+    },
+    qaGo: function (el) {
+      var t = ($('qaText').value || '').trim();
+      AI.qaText = t;
+      if (!t) { toast('Type something first.', true); return; }
+      el.disabled = true; toast('Reading your note…');
+      call('aiQuickAdd', S.adminPin, t).then(function (r) {
+        AI.qa = r.actions.map(function (x) { x._on = !x.problem; return x; });
+        if (!AI.qa.length) toast('Nothing to add was found in that note.', true);
+        renderAdmin();
+      }).catch(fail).then(function () { el.disabled = false; });
+    },
+    qaClear: function () { AI.qa = null; AI.qaText = ''; renderAdmin(); },
+    qaApply: function (el) { aiApplyList(AI.qa, el, function () { AI.qa = null; AI.qaText = ''; }); },
+    sgApply: function (el) {
+      el.disabled = true;
+      adminCall('adminApplySuggestion', el.dataset.id).then(function (r) { toast('Applied: ' + r.applied); refresh(); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    sgDismiss: function (el) { el.disabled = true; adminCall('adminDismissSuggestion', el.dataset.id).catch(fail); },
+    aiQuests: function (el) {
+      AI.questReq = ($('aiQuestReq').value || '').trim();
+      el.disabled = true; toast('Thinking up quests…');
+      call('aiSuggestQuests', S.adminPin, AI.questReq).then(function (r) { AI.quests = r.quests; renderAdmin(); }).catch(fail).then(function () { el.disabled = false; });
+    },
+    aiQuestAdd: function (el) {
+      var q = AI.quests[Number(el.dataset.i)];
+      S.q.addedQuests.push({ name: q.name, icon: q.icon, points: q.points, vouchers: q.vouchers, desc: q.desc, obj: q.obj });
+      q._added = true;
+      renderAdmin();
+    },
+    aiMeals: function (el) {
+      AI.mealReq = ($('aiMealReq').value || '').trim();
+      el.disabled = true; toast('Planning meals…');
+      call('aiSuggestMeals', S.adminPin, AI.mealReq).then(function (r) {
+        r.suggestions.forEach(function (x) {
+          S.q.meals[x.meal] = S.q.meals[x.meal] || {};
+          S.q.meals[x.meal][x.day] = x.suggested;
+        });
+        AI.mealNote = (r.note ? r.note + ' ' : '') + 'The ' + r.suggestions.length + ' highlighted box' + (r.suggestions.length === 1 ? ' is a suggestion' : 'es are suggestions') + ': edit any of them, then Save changes (or Discard).';
+        renderAdmin();
+      }).catch(fail).then(function () { el.disabled = false; });
+    },
+    aiShop: function (el) {
+      el.disabled = true; toast('Working out the ingredients…');
+      call('aiMealShopping', S.adminPin, S.q.meals).then(function (r) {
+        AI.shop = r.items.map(function (x) { x._on = x.status === 'new'; return x; });
+        openModal(modalHead('Shopping list from meals') + '<p class="muted" style="margin:0">Checked items go on the shopping list. Things you already have are left unchecked.</p>' +
+          '<div style="max-height:60vh;overflow:auto">' + aiChecklist(AI.shop, 'shopApply', 'Add to the shopping list') + '</div>', { narrow: true });
+      }).catch(fail).then(function () { el.disabled = false; });
+    },
+    shopApply: function (el) { aiApplyList(AI.shop, el, function () { AI.shop = null; closeModal(); }); },
     alToggle: function (el) {
       adminCall('adminSetAlarmEnabled', el.dataset.id, el.dataset.v === '1').then(function () { refresh(); }).catch(fail);
     },
@@ -3241,9 +3395,16 @@
   });
   document.addEventListener('change', function (e) {
     if (e.target && e.target.id === 'thArea') { TH.area = e.target.value; renderAdmin(); }
+    if (e.target && e.target.dataset && e.target.dataset.ai) {
+      var list = e.target.dataset.ai === 'qaApply' ? AI.qa : AI.shop;
+      if (list && list[Number(e.target.dataset.i)]) list[Number(e.target.dataset.i)]._on = e.target.checked;
+    }
   });
   document.addEventListener('input', function (e) {
     if (e.target && e.target.id === 'cdName') CD_NAME = e.target.value;
+    if (e.target && e.target.id === 'qaText') AI.qaText = e.target.value;
+    if (e.target && e.target.id === 'aiMealReq') AI.mealReq = e.target.value;
+    if (e.target && e.target.id === 'aiQuestReq') AI.questReq = e.target.value;
     var el = e.target;
     if (!el.dataset || !el.dataset.q || S.view !== 'admin') return;
     if (el.dataset.q === 'setting') {
