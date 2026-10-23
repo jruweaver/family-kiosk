@@ -572,7 +572,28 @@
     return alarmsHtml() + '<div class="card"><h2>Bulletin board</h2><textarea class="f" id="bulletin" maxlength="300" style="margin-top:8px">' + esc(s.bulletin) + '</textarea>' +
       '<div class="row" style="margin-top:8px"><button class="btn primary" data-act="bulletinSave">Save message</button><button class="btn" data-act="bulletinClear">Clear</button></div></div>' +
       '<div class="card"><h2>Rewards to hand over</h2>' + (owed.length ? owed.map(line).join('') : '<div class="empty">Nothing owed.</div>') +
-      (given.length ? '<h3>Recently given</h3>' + given.map(line).join('') : '') + '</div>';
+      (given.length ? '<h3>Recently given</h3>' + given.map(line).join('') : '') + '</div>' + summaryHtml();
+  }
+
+  /* ---------- Daily summary email ---------- */
+  function summaryHtml() {
+    var s = S.admin.settings || {};
+    var m = String(s.summaryMode || 'Off').toLowerCase();
+    var mode = /^ai/.test(m) ? 'AI Generated' : /^basic/.test(m) ? 'Basic' : 'Off';
+    function fld(id, label, v, extra) {
+      return '<label class="l">' + label + '</label><input class="f" id="' + id + '" value="' + esc(v || '') + '" autocomplete="off"' + (extra || '') + '>';
+    }
+    return '<div class="card"><h2>Daily summary email</h2>' +
+      '<div class="seg" id="smMode" style="margin-top:8px">' + ['Off', 'Basic', 'AI Generated'].map(function (o) {
+        return '<button class="' + (mode === o ? 'on' : '') + '" data-act="smMode" data-v="' + o + '">' + o + '</button>';
+      }).join('') + '</div>' +
+      fld('smEmails', 'Email addresses (separate with ;)', s.summaryEmails, ' type="text" inputmode="email" placeholder="dad@example.com; mom@example.com"') +
+      fld('smTime', 'Send after', s.summaryTime, ' placeholder="8:00 PM"') +
+      fld('smSvc', 'AI service (website)', s.aiService, ' placeholder="anthropic.com, openai.com, gemini.google.com…"') +
+      fld('smKey', 'AI API key', s.aiKey, ' type="text" spellcheck="false"') +
+      fld('smModel', 'AI model (optional)', s.aiModel, ' placeholder="Blank picks a small, cheap one"') +
+      '<div class="row" style="margin-top:10px"><button class="btn primary" data-act="smSave">Save</button><button class="btn" data-act="smTest">✉️ Send test</button></div>' +
+      '<p class="muted" style="margin:8px 0 0">The test uses the saved settings. Daily emails need <b>setupTriggers</b> run once in the script editor.</p></div>';
   }
 
   /* ---------- actions ---------- */
@@ -669,6 +690,25 @@
     bulletinClear: function () {
       if (!confirm('Remove the bulletin message?')) return;
       admin('adminSaveSettings', { bulletin: '' }).then(function () { toast('Message cleared'); }).catch(fail);
+    },
+    smMode: function (el) {
+      Array.prototype.forEach.call($('smMode').querySelectorAll('button'), function (b) { b.classList.toggle('on', b === el); });
+    },
+    smSave: function (el) {
+      var on = $('smMode').querySelector('button.on');
+      el.disabled = true;
+      admin('adminSaveSettings', {
+        summaryMode: on ? on.dataset.v : 'Off', summaryEmails: $('smEmails').value.trim(), summaryTime: $('smTime').value.trim(),
+        aiService: $('smSvc').value.trim(), aiKey: $('smKey').value.trim(), aiModel: $('smModel').value.trim()
+      }).then(function () { toast('Summary settings saved'); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    smTest: function (el) {
+      el.disabled = true; toast('Sending…');
+      call('adminSendSummaryNow', S.pin).then(function (r) {
+        var x = (r && r.result) || {};
+        el.disabled = false;
+        toast(x.sent ? 'Sent to ' + (x.to || []).join(', ') + (x.mode === 'ai' ? ' (AI: ' + x.model + ')' : x.aiError ? ' — basic only: ' + x.aiError : '') : (x.reason || 'Not sent'), !x.sent || !!x.aiError);
+      }).catch(function (e) { el.disabled = false; fail(e); });
     },
     given: function (el) {
       admin('adminSetRewardFulfilled', el.dataset.id, el.dataset.v === '1').then(function () { toast(el.dataset.v === '1' ? 'Marked given' : 'Moved back to owed'); }).catch(fail);

@@ -2933,7 +2933,13 @@
     ['weatherKey', 'OpenWeatherMap API key', 'text'],
     ['calendar1', 'Family calendar ID (kiosk can add events here)', 'text'],
     ['calendar2', 'Extra calendar ID (read only)', 'text'],
-    ['calendar3', 'Extra calendar ID (read only)', 'text']
+    ['calendar3', 'Extra calendar ID (read only)', 'text'],
+    ['summaryMode', 'Daily summary email', 'summaryMode'],
+    ['summaryEmails', 'Summary email addresses (separate with ;)', 'text'],
+    ['summaryTime', 'Send the summary after (e.g. 8:00 PM)', 'text'],
+    ['aiService', 'AI service (website, e.g. anthropic.com, openai.com, gemini.google.com)', 'text'],
+    ['aiKey', 'AI API key', 'text'],
+    ['aiModel', 'AI model (optional — blank picks a small one)', 'text']
   ];
   function adminSettings(a) {
     var s = a.settings || {};
@@ -2947,6 +2953,11 @@
       else if (f[2] === 'theme') input = '<div class="seg' + queued + '">' + [['DEFAULT', 'Mint'], ['HALLOWEEN', 'Halloween'], ['DARK', 'Midnight'], ['OCEAN', 'Ocean'], ['HOLIDAY', 'Holiday'], ['ARCADE', 'Arcade']].map(function (o) {
         return '<button class="' + (String(v || 'DEFAULT').toUpperCase() === o[0] ? 'on' : '') + '" data-act="setTheme" data-v="' + o[0] + '">' + o[1] + '</button>';
       }).join('') + '</div>';
+      else if (f[2] === 'summaryMode') input = '<div class="seg' + queued + '">' + [['Off', 'Off'], ['Basic', 'Basic'], ['AI Generated', 'AI Generated']].map(function (o) {
+        var cur = String(v || 'Off').toLowerCase();
+        var on = o[0] === 'AI Generated' ? /^ai/.test(cur) : o[0] === 'Basic' ? /^basic/.test(cur) : !/^(ai|basic)/.test(cur);
+        return '<button class="' + (on ? 'on' : '') + '" data-act="setToggle" data-k="summaryMode" data-v="' + o[0] + '">' + o[1] + '</button>';
+      }).join('') + '</div>';
       else if (f[2] === 'tz') input = '<div class="seg' + queued + '">' + [['America/New_York', 'Eastern'], ['America/Chicago', 'Central'], ['America/Denver', 'Mountain'], ['America/Los_Angeles', 'Pacific']].map(function (o) {
         return '<button class="' + (v === o[0] ? 'on' : '') + '" data-act="setToggle" data-k="timeZone" data-v="' + o[0] + '">' + o[1] + '</button>';
       }).join('') + '</div>';
@@ -2954,9 +2965,11 @@
       if (k === 'background' || k === 'screensaverImage') {
         input = '<div style="display:flex;gap:10px;align-items:center"><div style="flex:1">' + input + '</div><button class="btn small" data-act="aUploadSetting" data-k="' + k + '">📷 Upload photo</button></div>';
       }
-      var wide = f[2] === 'textarea' || f[2] === 'theme' || /calendar|Image|background/.test(k) ? ' style="grid-column:1/-1"' : '';
+      var wide = f[2] === 'textarea' || f[2] === 'theme' || /calendar|Image|background|summaryEmails|aiService/.test(k) ? ' style="grid-column:1/-1"' : '';
       return '<div' + wide + '><span class="label">' + esc(f[1]) + '</span>' + input + '</div>';
-    }).join('') + '</div></div>';
+    }).join('') + '</div>' +
+      '<div style="display:flex;gap:12px;align-items:center;margin-top:16px;flex-wrap:wrap"><button class="btn" data-act="sendSummary">✉️ Send a test summary now</button>' +
+      '<span class="muted" style="font-size:14px">Uses the saved settings above. The daily one goes out automatically after the set time once <b>setupTriggers</b> has been run in the script editor.</span></div></div>';
   }
 
   function adminLedger(a) {
@@ -3197,6 +3210,14 @@
     aRewardPhoto: function (el) { uploadMedia('reward', el.dataset.id); },
     alEdit: function (el) { alarmForm(el.dataset.id || ''); },
     thSort: function (el) { TH.sort = el.dataset.v; renderAdmin(); },
+    sendSummary: function (el) {
+      if (dirtyCount() > 0) { toast('Save your changes first, then send the test.', true); return; }
+      el.disabled = true; toast('Writing the summary…');
+      call('adminSendSummaryNow', S.adminPin).then(function (r) {
+        var x = r.result || {};
+        toast(x.sent ? 'Sent to ' + (x.to || []).join(', ') + (x.mode === 'ai' ? ' (AI: ' + x.model + ')' : x.aiError ? ' — basic only: ' + x.aiError : '') : (x.reason || 'Not sent'), !x.sent || !!x.aiError);
+      }).catch(fail).then(function () { el.disabled = false; });
+    },
     thReload: function () { TH.tasks = null; renderAdmin(); },
     alToggle: function (el) {
       adminCall('adminSetAlarmEnabled', el.dataset.id, el.dataset.v === '1').then(function () { refresh(); }).catch(fail);
