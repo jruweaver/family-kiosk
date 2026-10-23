@@ -2127,7 +2127,7 @@
 
     var side = '';
     if (t.bonus.length) {
-      side += '<div class="side-card"><h3>⚡ Bonus tasks</h3><p>First come, first served. They don\'t affect your streak.</p>' + t.bonus.map(function (b) {
+      side += '<div class="side-card"><h3>🙌 Up for Grabs!</h3><p>First come, first served. They don\'t affect your streak.</p>' + t.bonus.map(function (b) {
         var st = choreState(b);
         var action = st === 'available' ? '<button class="btn small primary" data-act="chore" data-id="' + esc(b.id) + '">+' + b.points + '</button>'
           : st === 'queued' ? '<button class="btn small" data-act="chore" data-id="' + esc(b.id) + '">Undo</button>'
@@ -2886,13 +2886,14 @@
       '<table class="table"><thead><tr><th>Task</th><th>Last done</th><th>By</th><th>Missed since then</th></tr></thead><tbody>' +
       list.map(function (t) {
         var w = whenLabel(t);
-        var kind = t.kind === 'bonus' ? 'daily task' : t.kind === 'weekly' ? (t.rotation === 'daily' ? 'daily rotation' : 'weekly rotation') : '';
+        var kind = t.kind === 'bonus' ? 'up for grabs' : t.kind === 'weekly' ? (t.rotation === 'daily' ? 'daily rotation' : 'weekly rotation') : '';
+        if (t.days) kind += (kind ? ' · ' : '') + t.days + ' only';
         return '<tr class="th-row"><td><b>' + esc(t.task) + '</b>' + (t.person ? ' <span class="chip" style="font-size:13px">' + esc(t.person) + '\'s</span>' : '') + '<div class="muted" style="font-size:14px">' + esc(t.area) + (t.group && t.group !== t.area ? ' › ' + esc(t.group) : '') + (kind ? ' · ' + kind : '') + '</div></td>' +
           '<td><div class="th-when ' + w[1] + '">' + w[0] + '</div>' + (t.lastDone ? '<div class="muted" style="font-size:14px">' + esc(t.lastDone.dateLabel) + '</div>' : '') + '</td>' +
           '<td>' + (t.lastDone ? '<b>' + esc(t.lastDone.member) + '</b>' : '<span class="muted">—</span>') + '</td>' +
           '<td>' + missedChips(t.missedSince) + '</td></tr>';
       }).join('') + '</tbody></table>' +
-      '<p class="muted" style="margin:10px 0 0;font-size:14px">"Missed" comes from the nightly check, so it covers area and rotation chores. Shared daily tasks are first-come and are never marked missed.</p></div>';
+      '<p class="muted" style="margin:10px 0 0;font-size:14px">"Missed" comes from the nightly check, so it covers area and rotation chores. Up for Grabs tasks are first-come and are never marked missed.</p></div>';
   }
 
   /* ---------- Parents → Alarms ---------- */
