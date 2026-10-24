@@ -363,8 +363,18 @@
   }
 
   /* ---------- Kids ---------- */
+  function rewardsWaitingHtml() {
+    var w = (S.admin.rewardHistory || []).filter(function (h) { return h.status === 'pending'; });
+    if (!w.length) return '';
+    return '<div class="card" style="border:2px solid var(--warn)"><h2>🎁 Waiting for approval (' + w.length + ')</h2>' + w.map(function (h) {
+      return '<div class="line"><div class="grow"><b>' + esc(h.kid) + '</b> · ' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') +
+        '<div class="muted">' + num(-h.points) + ' coins · ' + esc(h.date) + '</div></div>' +
+        '<button class="btn sm primary" data-act="rwApprove" data-id="' + esc(h.transactionId) + '">Approve</button>' +
+        '<button class="btn sm bad" data-act="rwDeny" data-id="' + esc(h.transactionId) + '" data-kid="' + esc(h.kid) + '" data-r="' + esc(h.reward) + '" data-c="' + (-h.points) + '">Deny</button></div>';
+    }).join('') + '<p class="muted" style="margin:8px 0 0">Approve when you hand it over. Deny gives the coins (and any tickets) back.</p></div>';
+  }
   function kidsHtml() {
-    return aiKidsTop() + S.admin.adminUserStats.map(function (u, i) {
+    return rewardsWaitingHtml() + aiKidsTop() + S.admin.adminUserStats.map(function (u, i) {
       var changed = u.overridden && u.scheduledRoom && u.scheduledRoom !== 'None' && u.scheduledRoom !== u.room;
       var rooms = (u.rooms || S.admin.rooms).filter(function (r) { return r !== u.room && !(changed && r === u.scheduledRoom); });
       var chores = (u.chores || []).map(function (c) {
@@ -626,16 +636,16 @@
   /* ---------- More: alarms, bulletin, rewards to hand over ---------- */
   function moreHtml() {
     var s = S.admin.settings || {};
-    var owed = S.admin.rewardHistory.filter(function (h) { return !h.fulfilled; });
-    var given = S.admin.rewardHistory.filter(function (h) { return h.fulfilled; }).slice(0, 5);
+    var decided = S.admin.rewardHistory.filter(function (h) { return h.status && h.status !== 'pending'; }).slice(0, 8);
     function line(h) {
       return '<div class="line"><div class="grow"><b>' + esc(h.kid) + '</b> · ' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') + '<div class="muted">' + esc(h.date) + '</div></div>' +
-        '<button class="btn sm' + (h.fulfilled ? '' : ' primary') + '" data-act="given" data-id="' + esc(h.transactionId) + '" data-v="' + (h.fulfilled ? 0 : 1) + '">' + (h.fulfilled ? 'Undo' : 'Mark given') + '</button></div>';
+        (h.status === 'approved' ? '<span class="ok">✓ Approved</span><button class="btn sm" data-act="rwUndo" data-id="' + esc(h.transactionId) + '">Undo</button>'
+          : '<span class="bad">Denied · refunded</span>') + '</div>';
     }
     return alarmsHtml() + '<div class="card"><h2>Bulletin board</h2><textarea class="f" id="bulletin" maxlength="300" style="margin-top:8px">' + esc(s.bulletin) + '</textarea>' +
       '<div class="row" style="margin-top:8px"><button class="btn primary" data-act="bulletinSave">Save message</button><button class="btn" data-act="bulletinClear">Clear</button></div></div>' +
-      '<div class="card"><h2>Rewards to hand over</h2>' + (owed.length ? owed.map(line).join('') : '<div class="empty">Nothing owed.</div>') +
-      (given.length ? '<h3>Recently given</h3>' + given.map(line).join('') : '') + '</div>' + summaryHtml() + aiFeaturesHtml();
+      '<div class="card"><h2>Rewards — recently decided</h2>' + (decided.length ? decided.map(line).join('') : '<div class="empty">Nothing yet. Rewards waiting for approval show at the top of the Kids tab.</div>') + '</div>' +
+      summaryHtml() + aiFeaturesHtml();
   }
 
   /* ---------- AI feature switches ---------- */
@@ -879,6 +889,19 @@
         el.disabled = false;
         toast(x.sent ? 'Sent to ' + (x.to || []).join(', ') + (x.mode === 'ai' ? ' (AI: ' + x.model + ')' : x.aiError ? ' — basic only: ' + x.aiError : '') : (x.reason || 'Not sent'), !x.sent || !!x.aiError);
       }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    rwApprove: function (el) {
+      el.disabled = true;
+      admin('adminDecideReward', el.dataset.id, 'approve').then(function (r) { toast('Approved: ' + r.member + ' — ' + r.reward); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    rwDeny: function (el) {
+      if (!confirm('Deny ' + el.dataset.r + ' for ' + el.dataset.kid + '? Their ' + el.dataset.c + ' coins (and any tickets) go back. This can\'t be undone.')) return;
+      el.disabled = true;
+      admin('adminDecideReward', el.dataset.id, 'deny').then(function (r) { toast('Denied — ' + r.refund.coins + ' coins back to ' + r.member); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    rwUndo: function (el) {
+      el.disabled = true;
+      admin('adminDecideReward', el.dataset.id, 'pending').then(function () { toast('Moved back to waiting'); }).catch(function (e) { el.disabled = false; fail(e); });
     },
     given: function (el) {
       admin('adminSetRewardFulfilled', el.dataset.id, el.dataset.v === '1').then(function () { toast(el.dataset.v === '1' ? 'Marked given' : 'Moved back to owed'); }).catch(fail);

@@ -2241,9 +2241,14 @@
   function rewardsFor(u) {
     return (S.data.rewards || []).filter(function (r) { return !r.tier || !u.tier || r.tier === u.tier; });
   }
+  function kidWaiting(u) {
+    var w = (u.recentTransactions || []).filter(function (t) { return t.status === 'pending'; });
+    return w.length ? '<div class="lockbar" style="background:color-mix(in srgb,var(--warn) 18%,var(--surface))">⏳ <span>Waiting for a parent to approve: <b>' +
+      w.map(function (t) { return esc(t.description); }).join(', ') + '</b></span></div>' : '';
+  }
   function kidRewards(u) {
     var list = rewardsFor(u);
-    return (u.rewardsLocked ? '<div class="lockbar">🔒 <span>Finish today\'s chores to unlock rewards.</span></div>' : '') +
+    return kidWaiting(u) + (u.rewardsLocked ? '<div class="lockbar">🔒 <span>Finish today\'s chores to unlock rewards.</span></div>' : '') +
       (list.length ? '<div class="rewards">' + list.map(function (r) { return rewardCard(r, u, false); }).join('') + '</div>' : '<div class="empty">No rewards are turned on right now.</div>');
   }
   function kidVault(u) {
@@ -2284,7 +2289,8 @@
         replaceUser(res.user);
         closeModal();
         renderKid();
-        celebrate(r.emoji || '🎁', r.name + ' is yours!', res.pending ? 'A parent will hand it over soon.' : 'Enjoy!');
+        if (res.pending) celebrate(r.emoji || '🎁', r.name + ' requested!', 'A parent will approve it soon. If it isn\'t approved, your coins come back.');
+        else celebrate(r.emoji || '🎁', r.name + ' is yours!', 'Enjoy!');
       }).catch(function (e) { closeModal(); fail(e); });
     };
   }
@@ -2355,7 +2361,10 @@
     var u = currentKid();
     openModal(modalHead('My bank statement') + '<div class="list-rows">' + (u.recentTransactions.length ? u.recentTransactions.map(function (t) {
       var pos = t.points > 0;
-      return '<div class="row"><div class="grow"><div style="font-weight:700">' + esc(t.description) + '</div><div class="muted" style="font-size:15px">' + esc(t.type) + ' · ' + esc(t.date) + '</div></div>' +
+      var chip = t.status === 'pending' ? ' <span class="chip" style="color:var(--warn)">⏳ Waiting for approval</span>'
+        : t.status === 'approved' ? ' <span class="chip" style="color:var(--ok)">✓ Approved</span>'
+          : t.status === 'denied' ? ' <span class="chip" style="color:var(--danger)">Not approved · refunded</span>' : '';
+      return '<div class="row"><div class="grow"><div style="font-weight:700">' + esc(t.description) + chip + '</div><div class="muted" style="font-size:15px">' + esc(t.type) + ' · ' + esc(t.date) + '</div></div>' +
         '<b class="num" style="color:' + (t.points === 0 ? 'var(--muted)' : pos ? 'var(--ok)' : 'var(--danger)') + '">' + (pos ? '+' : '') + n(t.points) + '</b></div>';
     }).join('') : '<div class="empty">No transactions yet.</div>') + '</div>');
   }
@@ -2564,6 +2573,9 @@
     pane.innerHTML = t === 'today' ? adminToday(a) : t === 'quests' ? adminQuests(a) : t === 'rewards' ? adminRewards(a)
       : t === 'meals' ? adminMeals(a) : t === 'countdowns' ? adminCountdowns(a) : t === 'alarms' ? adminAlarms(a) : t === 'tasks' ? adminTasks() : t === 'settings' ? adminSettings(a) : adminLedger(a);
     pane.scrollTop = scroll;
+    var rwTab = document.querySelector('#adminTabs [data-tab=rewards]');
+    var nWait = (a.pendingRewards || []).length;
+    if (rwTab) rwTab.textContent = 'Rewards' + (nWait ? ' (' + nWait + ')' : '');
     renderAdminDock();
   }
 
@@ -2733,13 +2745,21 @@
     }
     var std = a.allRewards.filter(function (r) { return r.type === 'standard'; });
     var sec = a.allRewards.filter(function (r) { return r.type === 'secret'; });
-    var hist = a.rewardHistory.map(function (h) {
-      var f = S.q.fulfillmentUpdates[h.transactionId];
-      var on = f !== undefined ? f : h.fulfilled;
-      return '<tr><td><b>' + esc(h.kid) + '</b></td><td>' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') + '</td><td class="muted">' + esc(h.date) + '</td>' +
-        '<td><div class="seg' + (f !== undefined ? ' queued' : '') + '"><button class="' + (!on ? 'on' : '') + '" data-act="fToggle" data-id="' + esc(h.transactionId) + '" data-v="0">Owed</button><button class="' + (on ? 'on' : '') + '" data-act="fToggle" data-id="' + esc(h.transactionId) + '" data-v="1">Given</button></div></td></tr>';
+    var pend = a.rewardHistory.filter(function (h) { return h.status === 'pending'; });
+    var done = a.rewardHistory.filter(function (h) { return h.status !== 'pending'; });
+    var pendRows = pend.map(function (h) {
+      return '<tr><td><b>' + esc(h.kid) + '</b></td><td>' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') + '</td><td class="num">' + n(-h.points) + ' 🪙</td><td class="muted">' + esc(h.date) + '</td>' +
+        '<td style="white-space:nowrap"><button class="btn small primary" data-act="rwApprove" data-id="' + esc(h.transactionId) + '">Approve</button> ' +
+        '<button class="btn small danger" data-act="rwDeny" data-id="' + esc(h.transactionId) + '" data-kid="' + esc(h.kid) + '" data-r="' + esc(h.reward) + '" data-c="' + (-h.points) + '">Deny</button></td></tr>';
     }).join('');
-    return '<div class="card"><h3 style="margin-bottom:8px">Rewards to hand over</h3><table class="table"><thead><tr><th>Who</th><th>Reward</th><th>When</th><th></th></tr></thead><tbody>' + (hist || '<tr><td colspan="4" class="muted">Nothing redeemed yet.</td></tr>') + '</tbody></table></div>' +
+    var doneRows = done.map(function (h) {
+      return '<tr><td><b>' + esc(h.kid) + '</b></td><td>' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') + '</td><td class="muted">' + esc(h.date) + '</td>' +
+        '<td>' + (h.status === 'approved' ? '<span class="chip" style="color:var(--ok)">✓ Approved</span> <button class="btn small ghost" data-act="rwUndo" data-id="' + esc(h.transactionId) + '">Undo</button>'
+          : '<span class="chip" style="color:var(--danger)">Denied · refunded</span>') + '</td></tr>';
+    }).join('');
+    return '<div class="card"><h3 style="margin-bottom:4px">Waiting for approval</h3><p class="muted" style="margin:0 0 10px">Coins are held when a reward is bought. Approve when you hand it over; Deny gives the coins (and any tickets) back.</p>' +
+      '<table class="table"><tbody>' + (pendRows || '<tr><td class="muted">Nothing waiting. 🎉</td></tr>') + '</tbody></table></div>' +
+      (doneRows ? '<div class="card"><h3 style="margin-bottom:8px">Recently decided</h3><table class="table"><tbody>' + doneRows + '</tbody></table></div>' : '') +
       '<div class="card"><h3 style="margin-bottom:8px">Reward shop</h3><table class="table"><tbody>' + std.map(function (r) {
         return '<tr><td><b>' + esc(r.name) + '</b>' + tierChip(r) + '</td><td class="num">' + n(r.costPts) + ' 🪙</td><td>' + statusSeg(r, [['ENABLED', 'On'], ['DISABLED', 'Off']]) + '</td><td><button class="btn small ghost" data-act="aRewardPhoto" data-id="' + esc(r.id) + '">📷 Photo</button></td></tr>';
       }).join('') + '</tbody></table></div>' +
@@ -3245,6 +3265,19 @@
       var r = S.admin.allRewards.filter(function (x) { return x.id === el.dataset.id; })[0];
       if (r.status === el.dataset.v) delete S.q.rewardStatusUpdates[r.id]; else S.q.rewardStatusUpdates[r.id] = el.dataset.v;
       renderAdmin();
+    },
+    rwApprove: function (el) {
+      el.disabled = true;
+      adminCall('adminDecideReward', el.dataset.id, 'approve').then(function (r) { toast('Approved: ' + r.member + ' — ' + r.reward); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    rwDeny: function (el) {
+      confirmBox('Deny ' + el.dataset.r + '?', esc(el.dataset.kid) + ' gets their ' + n(Number(el.dataset.c)) + ' coins back (and any vault tickets). This can\'t be undone.', 'Deny and refund', function () {
+        adminCall('adminDecideReward', el.dataset.id, 'deny').then(function (r) { toast('Denied — ' + r.refund.coins + ' coins back to ' + r.member); refresh(); }).catch(fail);
+      }, true);
+    },
+    rwUndo: function (el) {
+      el.disabled = true;
+      adminCall('adminDecideReward', el.dataset.id, 'pending').then(function () { toast('Moved back to waiting'); }).catch(function (e) { el.disabled = false; fail(e); });
     },
     fToggle: function (el) {
       var h = S.admin.rewardHistory.filter(function (x) { return x.transactionId === el.dataset.id; })[0];
