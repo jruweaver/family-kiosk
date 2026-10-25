@@ -378,7 +378,7 @@
       var changed = u.overridden && u.scheduledRoom && u.scheduledRoom !== 'None' && u.scheduledRoom !== u.room;
       var rooms = (u.rooms || S.admin.rooms).filter(function (r) { return r !== u.room && !(changed && r === u.scheduledRoom); });
       var chores = (u.chores || []).map(function (c) {
-        var st = c.completed ? '<span class="ok">Done</span>' : c.status === 'expired' ? '<span class="bad">Missed</span>' : c.status === 'upcoming' ? '<span class="warn">' + esc(c.availabilityLabel) + '</span>' : '<span class="muted">To do</span>';
+        var st = c.completed ? '<span class="ok">Done</span>' : c.teamState ? '<span class="muted">' + esc(c.teamDoneBy) + ' did it · ' + (c.teamState === 'declined' ? 'didn\'t help' : 'hasn\'t said if they helped') + '</span>' : c.status === 'expired' ? '<span class="bad">Missed</span>' : c.status === 'upcoming' ? '<span class="warn">' + esc(c.availabilityLabel) + '</span>' : '<span class="muted">To do</span>';
         return '<div class="line"><div class="grow">' + esc(c.task) + (c.kind !== 'room' && c.kind !== 'independent' ? ' <span class="tag">' + esc(c.kind === 'weekly' && c.rotation === 'daily' ? 'daily rotation' : c.kind === 'bonus' ? 'up for grabs' : c.kind) + '</span>' : '') + '<div class="muted">' + st + '</div></div>' +
           (c.completed ? '<button class="btn sm" data-act="undo" data-i="' + i + '" data-id="' + esc(c.id) + '" data-t="' + esc(c.task) + '">Undo</button>'
             : '<button class="btn sm" data-act="done" data-i="' + i + '" data-id="' + esc(c.id) + '">Mark done</button>') + '</div>';

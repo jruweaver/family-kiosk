@@ -425,6 +425,11 @@
     .chore .tag { position: absolute; top: -9px; left: 14px; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--surface-3); color: var(--text); }
     .chore .tag.quest { background: var(--danger); color: #fff; }
     .chore .tag.weekly { background: var(--vault); color: var(--bg); }
+    .chore .tag.team { background: var(--ok); color: var(--bg); }
+    .chore.team-ask { grid-template-columns: 60px minmax(0, 1fr); border-color: color-mix(in srgb, var(--ok) 55%, transparent); cursor: default; }
+    .chore.team-ask:active { transform: none; }
+    .chore.team-ask.declined { opacity: .6; border-color: transparent; }
+    .chore .team-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
     .chore .check { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--line); flex: none; display: grid; place-items: center; font-size: 18px; font-weight: 800; }
     .chore.done { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); }
     .chore.done .check { background: var(--ok); border-color: var(--ok); color: var(--bg); }
@@ -2077,14 +2082,24 @@
     if (c.completed || c.status === 'completed_by_me') return 'done';
     return c.status; // available | upcoming | expired
   }
+  function teamTile(c) {
+    var declined = c.teamState === 'declined';
+    return '<div class="chore team-ask' + (declined ? ' declined' : '') + '"><span class="tag team">🤝 Team task</span>' +
+      '<div class="media">' + icon(c.icon, '🧹') + '</div>' +
+      '<div class="body"><div class="t">' + esc(c.task) + '</div>' +
+      '<div class="s" style="-webkit-line-clamp:3">' + (declined ? 'You said you didn\'t help. ' + esc(c.teamDoneBy) + ' did it.' : '<b style="color:var(--text)">' + esc(c.teamDoneBy) + ' already did this. Did you help?</b>') + '</div>' +
+      '<div class="team-btns"><button class="btn small primary" data-act="chore" data-id="' + esc(c.id) + '">🤝 I helped +' + c.points + '</button>' +
+      (declined ? '' : '<button class="btn small ghost" data-act="teamNo" data-id="' + esc(c.id) + '">I didn\'t help</button>') + '</div></div></div>';
+  }
   function choreTile(c) {
     var st = choreState(c);
+    if (c.teamState && st !== 'queued' && st !== 'sending') return teamTile(c);
     var cls = 'chore';
     if (st === 'done' || st === 'queued') cls += ' done';
     if (st === 'sending') cls += ' done pending';
     if (st === 'upcoming') cls += ' locked';
     if (st === 'expired') cls += ' missed';
-    var tag = c.kind === 'quest' ? '<span class="tag quest">🔥 Quest</span>' : c.kind === 'weekly' ? '<span class="tag weekly">' + (c.rotation === 'daily' ? 'Today\'s rotation' : 'This week\'s duty') + '</span>' : '';
+    var tag = c.team ? '<span class="tag team">🤝 Team task' + (c.team.length ? ' with ' + esc(c.team.join(', ')) : '') + '</span>' : c.kind === 'quest' ? '<span class="tag quest">🔥 Quest</span>' : c.kind === 'weekly' ? '<span class="tag weekly">' + (c.rotation === 'daily' ? 'Today\'s rotation' : 'This week\'s duty') + '</span>' : '';
     var when = st === 'upcoming' ? '<div class="when">' + esc(c.availabilityLabel) + '</div>'
       : st === 'expired' ? '<div class="when">Missed · closed at ' + esc(c.closes) + '</div>'
         : st === 'done' ? '<div class="when" style="color:var(--ok)">Done' + (c.completedAt ? ' at ' + esc(shortTime(c.completedAt)) : '') + '</div>'
@@ -2110,7 +2125,7 @@
     if (t.dayComplete && !t.isRestDay) {
       html += '<div class="day-done"><span class="big">🏆</span><span>All of today\'s chores are done. Rewards and quests are unlocked!</span></div>';
     }
-    var pendingHere = t.chores.concat(t.weekly).filter(function (c) { return S.queued[c.id] !== undefined || S.sending[c.id] !== undefined; }).length;
+    var pendingHere = t.chores.concat(t.weekly).filter(function (c) { return !c.teamState && (S.queued[c.id] !== undefined || S.sending[c.id] !== undefined); }).length;
     var main = '<div class="section"><div class="section-head"><h3>' + esc(t.displayRoom) + '</h3>' +
       (t.isRestDay ? '' : '<span class="chip num">' + (t.progress.done + pendingHere) + ' / ' + t.progress.total + '</span>') + '</div>';
     if (t.needsSelection && t.claim) {
@@ -2214,7 +2229,8 @@
       if (S.kid === kid) {
         var nu = currentKid();
         refreshKidLive(nu);
-        if (r.streakVoucher) celebrate('🎟️', 'You earned a Vault Ticket!', nu.streak + '-day streak. Keep it going!');
+        if (r.teamBonus) celebrate('🤝', 'Team bonus! +' + r.teamBonus, 'Everyone finished the area together. Great teamwork!');
+        else if (r.streakVoucher) celebrate('🎟️', 'You earned a Vault Ticket!', nu.streak + '-day streak. Keep it going!');
         else if (r.dayJustCompleted) celebrate('🔥', nu.streak + '-day streak!', 'Every chore done for today. Rewards and quests are unlocked.');
       }
       if (S.view === 'home') renderHome();
@@ -2585,7 +2601,7 @@
       var queuedRoom = S.q.overrides[u.name];
       var adj = S.q.adjustments.filter(function (x) { return x.kid === u.name; });
       var chores = (u.chores || []).map(function (c) {
-        var st = c.completed ? ['Done', 'var(--ok)'] : c.status === 'expired' ? ['Missed', 'var(--danger)'] : c.status === 'upcoming' ? [c.availabilityLabel, 'var(--warn)'] : ['To do', 'var(--muted)'];
+        var st = c.completed ? ['Done', 'var(--ok)'] : c.teamState ? [c.teamDoneBy + ' did it · ' + (c.teamState === 'declined' ? 'didn\'t help' : 'hasn\'t said if they helped'), 'var(--muted)'] : c.status === 'expired' ? ['Missed', 'var(--danger)'] : c.status === 'upcoming' ? [c.availabilityLabel, 'var(--warn)'] : ['To do', 'var(--muted)'];
         return '<div class="admin-chore"><div class="grow"><div style="font-weight:700">' + esc(c.task) + '</div><div class="st" style="color:' + st[1] + '">' + esc(st[0]) + (c.kind === 'weekly' ? (c.rotation === 'daily' ? ' · daily rotation' : ' · weekly') : c.kind === 'quest' ? ' · quest' : '') + '</div></div>' +
           (c.completed ? '<button class="btn small ghost" data-act="aReset" data-kid="' + esc(u.name) + '" data-id="' + esc(c.id) + '" data-t="' + esc(c.task) + '">Undo</button>'
             : '<button class="btn small" data-act="aApprove" data-kid="' + esc(u.name) + '" data-id="' + esc(c.id) + '">Mark done</button>') + '</div>';
@@ -3023,6 +3039,7 @@
     ['autoRefreshEnabled', 'Refresh automatically', 'toggle'],
     ['autoRefreshMinutes', 'Refresh every (minutes)', 'number'],
     ['timeZone', 'Time zone', 'tz'],
+    ['teamBonus', 'Team bonus % (everyone in a shared area finishes; 0 = off)', 'text'],
     ['zipCode', 'Weather zip code', 'text'],
     ['weatherKey', 'OpenWeatherMap API key', 'text'],
     ['calendar1', 'Family calendar ID (kiosk can add events here)', 'text'],
@@ -3123,6 +3140,11 @@
     admin: openAdmin,
     openKid: function (el) { openKid(el.dataset.name); },
     closeModal: closeModal,
+    teamNo: function (el) {
+      el.disabled = true;
+      call('declineTeamChore', S.kid, el.dataset.id).then(function (r) { replaceUser(r.user); renderKid(); toast('Okay. No coins for that one, and it won\'t count against you.'); })
+        .catch(function (e) { el.disabled = false; fail(e); });
+    },
     closeCelebrate: function () { $('celebrate').classList.remove('open'); },
     calPrev: function () { S.cal.m--; if (S.cal.m < 0) { S.cal.m = 11; S.cal.y--; } renderCalendar(); },
     calNext: function () { S.cal.m++; if (S.cal.m > 11) { S.cal.m = 0; S.cal.y++; } renderCalendar(); },
