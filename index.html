@@ -676,6 +676,17 @@
     #netBanner.off { background: var(--warn); color: #1b1300; }
     #soundChip { padding: 2px 10px; border-radius: 999px; background: var(--surface); color: var(--muted); font-weight: 700; font-size: 14px; display: none; }
     #soundChip.on { display: inline-block; }
+    #timerDock { position: fixed; left: 16px; bottom: 16px; z-index: 56; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+    #timerDock .tmr { display: flex; align-items: center; gap: 10px; padding: 8px 16px 8px 12px; border-radius: 999px; font-weight: 800; font-size: 18px;
+      background: color-mix(in srgb, var(--accent) 22%, var(--surface)); border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+    #timerDock .tmr .left { font-family: 'Bricolage Grotesque', 'Atkinson Hyperlegible', system-ui, sans-serif; font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+    #timerDock .tmr.paused { opacity: .75; border-style: dashed; }
+    #timerDock .tmr.soon { background: color-mix(in srgb, var(--warn) 30%, var(--surface)); border-color: var(--warn); }
+    #timerDock .tmr.done { background: color-mix(in srgb, var(--danger) 30%, var(--surface)); border-color: var(--danger); }
+    #timerDock .tmr small { font-weight: 600; color: var(--muted); font-size: 14px; }
+    .timer-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+    .timer-row:first-of-type { border-top: 0; }
+    .timer-row .left { font-family: 'Bricolage Grotesque', 'Atkinson Hyperlegible', system-ui, sans-serif; font-weight: 800; font-size: 26px; font-variant-numeric: tabular-nums; min-width: 90px; }
     #alarmScreen { position: fixed; inset: 0; z-index: 80; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 30px;
       background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--accent) 45%, var(--bg)), var(--bg) 70%); text-align: center; }
     #alarmScreen.open { display: flex; }
@@ -829,6 +840,7 @@
   <div id="toast" role="status" aria-live="polite"></div>
   <div id="netBanner"></div>
   <div id="alarmScreen" role="alertdialog" aria-live="assertive"></div>
+  <div id="timerDock" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -1317,6 +1329,80 @@
     }
     if (due) { alSave(); ringAlarm(due); }
   }
+  /* ==========================================================================
+     REWARD TIMERS — e.g. screen time; started when a parent approves the reward
+     ========================================================================== */
+  var TM = { list: [], skew: 0, rung: {}, polled: 0 };
+  try { TM.rung = JSON.parse(localStorage.getItem('fcc.timersRung') || '{}') || {}; } catch (e) { TM.rung = {}; }
+  function setTimers(t) {
+    if (!t || !t.timers) return;
+    TM.list = t.timers;
+    TM.skew = (t.now || Date.now()) - Date.now();
+    TM.polled = Date.now();
+    renderTimers();
+  }
+  function tmNow() { return Date.now() + TM.skew; }
+  function tmLeft(t) { return t.status === 'running' ? t.endMs - tmNow() : t.status === 'done' ? 0 : (t.remainingMs || t.minutes * 60000); }
+  function tmFmt(ms) {
+    var sec = Math.max(0, Math.ceil(ms / 1000));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = sec % 60;
+    return (h ? h + ':' + pad(m) : m) + ':' + pad(s2);
+  }
+  function tmState(t) { return t.status === 'running' && tmLeft(t) <= 0 ? 'done' : t.status; }
+  function renderTimers() {
+    var dock = $('timerDock');
+    // A finished timer shows until its alarm has been dismissed on this kiosk.
+    var show = TM.list.filter(function (t) {
+      var st = tmState(t);
+      return st === 'running' || st === 'paused' || (st === 'done' && (!TM.rung[t.id] || (AL.ringing && AL.ringing.id === 'timer:' + t.id)));
+    });
+    dock.innerHTML = show.map(function (t) {
+      var st = tmState(t), left = tmLeft(t);
+      return '<div class="tmr ' + st + (st === 'running' && left < 5 * 60000 ? ' soon' : '') + '">' + (st === 'paused' ? '⏸' : st === 'done' ? '⏰' : '⏱') +
+        ' <span>' + esc(t.member) + ' <small>' + esc(t.reward) + '</small></span><span class="left" data-tmr="' + esc(t.id) + '">' + (st === 'done' ? 'Time\'s up' : tmFmt(left)) + '</span></div>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tmr-big]'), function (el) {
+      var t = TM.list.filter(function (x) { return x.id === el.dataset.tmrBig; })[0];
+      if (t) el.textContent = tmState(t) === 'done' ? 'Time\'s up' : tmFmt(tmLeft(t));
+    });
+  }
+  function timerTick() {
+    if (Date.now() - TM.polled > 60000 && !OB.offline) { TM.polled = Date.now(); call('getTimers').then(setTimers).catch(function () { /* keep showing what we have */ }); }
+    var changed = false;
+    TM.list.forEach(function (t) {
+      if (tmState(t) !== 'done' || TM.rung[t.id]) return;
+      var late = -tmLeft(t);
+      TM.rung[t.id] = Date.now(); changed = true;
+      if (t.status === 'running' && late < 5 * 60000 && !AL.ringing) {
+        var p = nowParts();
+        ringAlarm({ id: 'timer:' + t.id, name: t.reward + ': time\'s up!', who: t.member, message: t.member + ', your ' + t.reward + ' is over.',
+          sound: 'chime', speak: true, snooze: 5, timeLabel: p.time + ' ' + p.ampm });
+      }
+    });
+    if (changed) { try { localStorage.setItem('fcc.timersRung', JSON.stringify(TM.rung)); } catch (e) { /* ignore */ } }
+    if (TM.list.length) renderTimers();
+  }
+  function myReadyTimers(u) { return TM.list.filter(function (t) { return t.status === 'ready' && t.member === u.name; }); }
+  function readyTimersHtml(u) {
+    return myReadyTimers(u).map(function (t) {
+      return '<div class="kid-note" style="justify-content:space-between"><span><span class="big">⏱</span> Your <b>' + esc(t.reward) + '</b> (' + t.minutes + ' min) is ready when you are.</span>' +
+        '<button class="btn primary" data-act="kidStartTimer" data-id="' + esc(t.id) + '">▶ Start</button></div>';
+    }).join('');
+  }
+  function adminTimersHtml() {
+    if (!TM.list.length) return '';
+    return '<div class="card ai-card"><h3 style="margin-bottom:6px">⏱ Timers</h3>' + TM.list.map(function (t) {
+      var st = tmState(t), id = esc(t.id);
+      var btns = st === 'ready' ? '<button class="btn small primary" data-act="tmAct" data-a="start" data-id="' + id + '">▶ Start</button>'
+        : st === 'running' ? '<button class="btn small" data-act="tmAct" data-a="pause" data-id="' + id + '">⏸ Pause</button>'
+          : st === 'paused' ? '<button class="btn small primary" data-act="tmAct" data-a="resume" data-id="' + id + '">▶ Resume</button>' : '';
+      return '<div class="timer-row"><span class="left" data-tmr-big="' + id + '">' + (st === 'done' ? 'Time\'s up' : tmFmt(tmLeft(t))) + '</span>' +
+        '<span class="grow" style="flex:1"><b>' + esc(t.member) + '</b> · ' + esc(t.reward) + ' <span class="muted">' + (st === 'ready' ? 'not started' : st === 'paused' ? 'paused' : '') + '</span></span>' +
+        btns + '<button class="btn small" data-act="tmAct" data-a="add" data-id="' + id + '">+5 min</button>' +
+        '<button class="btn small ghost" data-act="tmAct" data-a="stop" data-id="' + id + '">' + (st === 'done' ? 'Clear' : 'Stop') + '</button></div>';
+    }).join('') + '</div>';
+  }
+
   function ringAlarm(a) {
     AL.ringing = a;
     closeSaver();
@@ -1532,6 +1618,7 @@
     else show('home');
     tick();
     setInterval(tick, 1000);
+    setInterval(timerTick, 1000);
     refresh(true);
   }
 
@@ -1540,6 +1627,7 @@
     if (refreshing) return refreshing;
     refreshing = call('getDashboardData').then(function (r) {
       S.data = r;
+      setTimers(r.timers);
       S.loadedAt = Date.now();
       S.calCache = {};
       S.monthCache = {};
@@ -2113,6 +2201,7 @@
   function kidChores(u) {
     var t = u.today;
     var html = '';
+    html += readyTimersHtml(u);
     if (u.aiNote) html += '<div class="kid-note"><span class="big">🌅</span><span>' + esc(u.aiNote) + '</span></div>';
     var note = String(settings().bulletin || '').trim();
     if (note && !bulletinSeenBy(u.name, note)) {
@@ -2264,7 +2353,7 @@
   }
   function kidRewards(u) {
     var list = rewardsFor(u);
-    return kidWaiting(u) + (u.rewardsLocked ? '<div class="lockbar">🔒 <span>Finish today\'s chores to unlock rewards.</span></div>' : '') +
+    return readyTimersHtml(u) + kidWaiting(u) + (u.rewardsLocked ? '<div class="lockbar">🔒 <span>Finish today\'s chores to unlock rewards.</span></div>' : '') +
       (list.length ? '<div class="rewards">' + list.map(function (r) { return rewardCard(r, u, false); }).join('') + '</div>' : '<div class="empty">No rewards are turned on right now.</div>');
   }
   function kidVault(u) {
@@ -2597,7 +2686,7 @@
 
   function adminToday(a) {
     var rooms = a.rooms || [];
-    return aiTodayHtml(a) + '<div class="admin-users">' + a.adminUserStats.map(function (u, i) {
+    return adminTimersHtml() + aiTodayHtml(a) + '<div class="admin-users">' + a.adminUserStats.map(function (u, i) {
       var queuedRoom = S.q.overrides[u.name];
       var adj = S.q.adjustments.filter(function (x) { return x.kid === u.name; });
       var chores = (u.chores || []).map(function (c) {
@@ -2724,7 +2813,8 @@
       return '<tr style="' + (deleted ? 'opacity:.4;text-decoration:line-through' : '') + '"><td><div style="display:flex;gap:10px;align-items:center"><div class="media" style="width:44px;height:44px;font-size:24px">' + icon(q.icon, '🔥') + '</div><div><b>' + esc(q.name) + '</b><div class="muted" style="font-size:14px">' + esc(q.obj || q.desc) + '</div></div></div></td>' +
         '<td class="num">' + q.points + ' 🪙' + (q.vouchers ? ' · ' + q.vouchers + ' 🎟️' : '') + '</td>' +
         '<td><div class="seg' + (queued ? ' queued' : '') + '"><button class="' + (st === 'OPEN' ? 'on' : '') + '" data-act="qStatus" data-id="' + esc(q.id) + '" data-v="OPEN">Open</button><button class="' + (st !== 'OPEN' ? 'on' : '') + '" data-act="qStatus" data-id="' + esc(q.id) + '" data-v="CLOSED">Closed</button></div></td>' +
-        '<td><button class="btn small ' + (deleted ? '' : 'danger') + '" data-act="qDelete" data-id="' + esc(q.id) + '">' + (deleted ? 'Keep' : 'Delete') + '</button></td></tr>';
+        '<td style="white-space:nowrap">' + (deleted ? '' : '<button class="btn small" data-act="qEdit" data-id="' + esc(q.id) + '">✏️ Edit</button> ') +
+        '<button class="btn small ' + (deleted ? '' : 'danger') + '" data-act="qDelete" data-id="' + esc(q.id) + '">' + (deleted ? 'Keep' : 'Delete') + '</button></td></tr>';
     }).join('');
     var added = S.q.addedQuests.map(function (q, i) {
       return '<tr class="queued"><td><b>' + esc(q.name) + '</b> <span class="chip">new</span></td><td class="num">' + q.points + ' 🪙' + (q.vouchers ? ' · ' + q.vouchers + ' 🎟️' : '') + '</td><td>Open</td><td><button class="btn small" data-act="qUnadd" data-i="' + i + '">Remove</button></td></tr>';
@@ -2765,7 +2855,8 @@
     var done = a.rewardHistory.filter(function (h) { return h.status !== 'pending'; });
     var pendRows = pend.map(function (h) {
       return '<tr><td><b>' + esc(h.kid) + '</b></td><td>' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') + '</td><td class="num">' + n(-h.points) + ' 🪙</td><td class="muted">' + esc(h.date) + '</td>' +
-        '<td style="white-space:nowrap"><button class="btn small primary" data-act="rwApprove" data-id="' + esc(h.transactionId) + '">Approve</button> ' +
+        '<td style="white-space:nowrap"><button class="btn small primary" data-act="rwApprove" data-id="' + esc(h.transactionId) + '">' + (h.timerMin ? 'Approve &amp; start ⏱' : 'Approve') + '</button> ' +
+        (h.timerMin ? '<button class="btn small" data-act="rwApprove" data-later="1" data-id="' + esc(h.transactionId) + '">Approve, start later</button> ' : '') +
         '<button class="btn small danger" data-act="rwDeny" data-id="' + esc(h.transactionId) + '" data-kid="' + esc(h.kid) + '" data-r="' + esc(h.reward) + '" data-c="' + (-h.points) + '">Deny</button></td></tr>';
     }).join('');
     var doneRows = done.map(function (h) {
@@ -3140,6 +3231,16 @@
     admin: openAdmin,
     openKid: function (el) { openKid(el.dataset.name); },
     closeModal: closeModal,
+    kidStartTimer: function (el) {
+      el.disabled = true;
+      call('startTimer', S.kid, el.dataset.id, S.kidPin).then(function (r) { setTimers(r); renderKid(); toast('Timer started. Have fun!'); })
+        .catch(function (e) { el.disabled = false; fail(e); });
+    },
+    tmAct: function (el) {
+      el.disabled = true;
+      call('adminTimer', S.adminPin, el.dataset.id, el.dataset.a, 5).then(function (r) { setTimers(r); renderAdmin(); })
+        .catch(function (e) { el.disabled = false; fail(e); });
+    },
     teamNo: function (el) {
       el.disabled = true;
       call('declineTeamChore', S.kid, el.dataset.id).then(function (r) { replaceUser(r.user); renderKid(); toast('Okay. No coins for that one, and it won\'t count against you.'); })
@@ -3282,6 +3383,26 @@
         desc: ($('nqDesc').value || '').trim(), obj: ($('nqObj').value || '').trim() });
       renderAdmin();
     },
+    qEdit: function (el) {
+      var q = S.admin.allQuests.filter(function (x) { return x.id === el.dataset.id; })[0];
+      if (!q) return;
+      openModal(modalHead('Edit quest') + '<div class="grid2">' +
+        '<div><label class="label" for="eqName">Name</label><input class="field" id="eqName" maxlength="80" value="' + esc(q.name) + '"></div>' +
+        '<div><label class="label" for="eqIcon">Emoji or image link</label><input class="field" id="eqIcon" maxlength="300" value="' + esc(q.icon) + '"></div>' +
+        '<div><label class="label" for="eqPts">Coins</label><input class="field" id="eqPts" type="number" inputmode="numeric" value="' + esc(q.points) + '"></div>' +
+        '<div><label class="label" for="eqVch">Vault tickets</label><input class="field" id="eqVch" type="number" inputmode="numeric" value="' + esc(q.vouchers || 0) + '"></div>' +
+        '<div style="grid-column:1/-1"><label class="label" for="eqDesc">Story</label><input class="field" id="eqDesc" maxlength="300" value="' + esc(q.desc) + '"></div>' +
+        '<div style="grid-column:1/-1"><label class="label" for="eqObj">What to do</label><input class="field" id="eqObj" maxlength="300" value="' + esc(q.obj) + '"></div>' +
+        '</div><div class="sheet-actions"><button class="btn ghost" data-act="closeModal">Cancel</button><button class="btn primary" id="eqSave">Save quest</button></div>');
+      $('eqSave').onclick = function () {
+        var name = ($('eqName').value || '').trim();
+        if (!name) { toast('Give the quest a name.', true); return; }
+        this.disabled = true;
+        adminCall('adminUpdateQuest', q.id, { name: name, icon: $('eqIcon').value, points: Number($('eqPts').value || 0), vouchers: Number($('eqVch').value || 0), desc: $('eqDesc').value, obj: $('eqObj').value })
+          .then(function () { closeModal(); toast('Quest saved'); refresh(); })
+          .catch(function (e) { $('eqSave').disabled = false; fail(e); });
+      };
+    },
     qUnadd: function (el) { S.q.addedQuests.splice(Number(el.dataset.i), 1); renderAdmin(); },
     rStatus: function (el) {
       var r = S.admin.allRewards.filter(function (x) { return x.id === el.dataset.id; })[0];
@@ -3290,7 +3411,10 @@
     },
     rwApprove: function (el) {
       el.disabled = true;
-      adminCall('adminDecideReward', el.dataset.id, 'approve').then(function (r) { toast('Approved: ' + r.member + ' — ' + r.reward); }).catch(function (e) { el.disabled = false; fail(e); });
+      adminCall('adminDecideReward', el.dataset.id, el.dataset.later ? 'approve later' : 'approve').then(function (r) {
+        toast('Approved: ' + r.member + ' — ' + r.reward + (r.timer ? (r.timer.status === 'running' ? ' · ' + r.timer.minutes + '-minute timer started' : ' · timer ready for ' + r.member + ' to start') : ''));
+        if (r.timer) call('getTimers').then(setTimers);
+      }).catch(function (e) { el.disabled = false; fail(e); });
     },
     rwDeny: function (el) {
       confirmBox('Deny ' + el.dataset.r + '?', esc(el.dataset.kid) + ' gets their ' + n(Number(el.dataset.c)) + ' coins back (and any vault tickets). This can\'t be undone.', 'Deny and refund', function () {

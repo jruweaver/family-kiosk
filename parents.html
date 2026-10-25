@@ -268,7 +268,7 @@
   function admin(fn) {
     var args = Array.prototype.slice.call(arguments, 1);
     return call.apply(null, [fn, S.pin].concat(args)).then(function (res) {
-      if (res && res.admin) S.admin = res.admin;
+      if (res && res.admin) { S.admin = res.admin; if (res.admin.timers) setTimers(res.admin.timers); }
       render();
       return res;
     });
@@ -363,18 +363,52 @@
   }
 
   /* ---------- Kids ---------- */
+  /* ---------- Reward timers ---------- */
+  var TM = { list: [], skew: 0 };
+  function setTimers(t) { if (t && t.timers) { TM.list = t.timers; TM.skew = (t.now || Date.now()) - Date.now(); } }
+  function tmLeft(t) { return t.status === 'running' ? t.endMs - (Date.now() + TM.skew) : t.status === 'done' ? 0 : (t.remainingMs || t.minutes * 60000); }
+  function tmState(t) { return t.status === 'running' && tmLeft(t) <= 0 ? 'done' : t.status; }
+  function tmFmt(ms) {
+    var sec = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+    return (h ? h + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + x).slice(-2);
+  }
+  function timersHtml() {
+    if (S.admin && S.admin.timers && !TM.list.length && !TM.loaded) { setTimers(S.admin.timers); TM.loaded = true; }
+    if (!TM.list.length) return '';
+    return '<div class="card ai"><h2>⏱ Timers</h2>' + TM.list.map(function (t) {
+      var st = tmState(t), id = esc(t.id);
+      return '<div class="line" style="flex-wrap:wrap"><div class="grow"><b>' + esc(t.member) + '</b> · ' + esc(t.reward) +
+        '<div><b style="font-size:20px" data-tmr-big="' + id + '">' + (st === 'done' ? 'Time\'s up' : tmFmt(tmLeft(t))) + '</b> <span class="muted">' + (st === 'ready' ? 'not started' : st === 'paused' ? 'paused' : '') + '</span></div></div>' +
+        (st === 'ready' ? '<button class="btn sm primary" data-act="tmAct" data-a="start" data-id="' + id + '">Start</button>'
+          : st === 'running' ? '<button class="btn sm" data-act="tmAct" data-a="pause" data-id="' + id + '">Pause</button>'
+            : st === 'paused' ? '<button class="btn sm primary" data-act="tmAct" data-a="resume" data-id="' + id + '">Resume</button>' : '') +
+        '<button class="btn sm" data-act="tmAct" data-a="add" data-id="' + id + '">+5</button>' +
+        '<button class="btn sm" data-act="tmAct" data-a="stop" data-id="' + id + '">' + (st === 'done' ? 'Clear' : 'Stop') + '</button></div>';
+    }).join('') + '</div>';
+  }
+  setInterval(function () {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tmr-big]'), function (el) {
+      var t = TM.list.filter(function (x) { return x.id === el.dataset.tmrBig; })[0];
+      if (t) el.textContent = tmState(t) === 'done' ? 'Time\'s up' : tmFmt(tmLeft(t));
+    });
+  }, 1000);
+  setInterval(function () {
+    if (S.pin && S.tab === 'kids' && document.visibilityState === 'visible') call('getTimers').then(function (r) { var had = TM.list.length; setTimers(r); if (had !== TM.list.length) render(); }).catch(function () {});
+  }, 60000);
+
   function rewardsWaitingHtml() {
     var w = (S.admin.rewardHistory || []).filter(function (h) { return h.status === 'pending'; });
     if (!w.length) return '';
     return '<div class="card" style="border:2px solid var(--warn)"><h2>🎁 Waiting for approval (' + w.length + ')</h2>' + w.map(function (h) {
       return '<div class="line"><div class="grow"><b>' + esc(h.kid) + '</b> · ' + esc(h.reward) + (h.type === 'Secret Reward' ? ' 🔐' : '') +
         '<div class="muted">' + num(-h.points) + ' coins · ' + esc(h.date) + '</div></div>' +
-        '<button class="btn sm primary" data-act="rwApprove" data-id="' + esc(h.transactionId) + '">Approve</button>' +
+        '<div class="row" style="flex-direction:column;gap:6px"><button class="btn sm primary" data-act="rwApprove" data-id="' + esc(h.transactionId) + '">' + (h.timerMin ? 'Approve &amp; start ⏱' : 'Approve') + '</button>' +
+        (h.timerMin ? '<button class="btn sm" data-act="rwApprove" data-later="1" data-id="' + esc(h.transactionId) + '">Start later</button>' : '') + '</div>' +
         '<button class="btn sm bad" data-act="rwDeny" data-id="' + esc(h.transactionId) + '" data-kid="' + esc(h.kid) + '" data-r="' + esc(h.reward) + '" data-c="' + (-h.points) + '">Deny</button></div>';
     }).join('') + '<p class="muted" style="margin:8px 0 0">Approve when you hand it over. Deny gives the coins (and any tickets) back.</p></div>';
   }
   function kidsHtml() {
-    return rewardsWaitingHtml() + aiKidsTop() + S.admin.adminUserStats.map(function (u, i) {
+    return timersHtml() + rewardsWaitingHtml() + aiKidsTop() + S.admin.adminUserStats.map(function (u, i) {
       var changed = u.overridden && u.scheduledRoom && u.scheduledRoom !== 'None' && u.scheduledRoom !== u.room;
       var rooms = (u.rooms || S.admin.rooms).filter(function (r) { return r !== u.room && !(changed && r === u.scheduledRoom); });
       var chores = (u.chores || []).map(function (c) {
@@ -507,7 +541,18 @@
         }).join('') : '') + '</div>' : '') +
       (q.length ? q.map(function (x) {
         var open = x.status === 'OPEN' || x.state === 'open';
-        return '<div class="card"><div class="row"><div class="grow"><b>' + esc(x.name) + '</b><div class="muted">' + esc(x.obj || x.desc) + '</div><div class="muted">' + x.points + ' coins' + (x.vouchers ? ' · ' + x.vouchers + ' tickets' : '') + '</div></div></div>' +
+        if (S.qEdit === x.id) {
+          return '<div class="card"><h2>Edit quest</h2>' +
+            '<label class="l">Name</label><input class="f" id="eqName" maxlength="80" value="' + esc(x.name) + '">' +
+            '<label class="l">What to do</label><input class="f" id="eqObj" maxlength="300" value="' + esc(x.obj) + '">' +
+            '<label class="l">Story</label><input class="f" id="eqDesc" maxlength="300" value="' + esc(x.desc) + '">' +
+            '<div class="row"><div class="grow"><label class="l">Coins</label><input class="f" id="eqPts" type="number" inputmode="numeric" value="' + esc(x.points) + '"></div>' +
+            '<div class="grow"><label class="l">Tickets</label><input class="f" id="eqVch" type="number" inputmode="numeric" value="' + esc(x.vouchers || 0) + '"></div>' +
+            '<div class="grow"><label class="l">Emoji</label><input class="f" id="eqIcon" maxlength="300" value="' + esc(x.icon) + '"></div></div>' +
+            '<div class="row" style="margin-top:10px"><button class="btn primary grow" data-act="qSave" data-id="' + esc(x.id) + '">Save</button><button class="btn" data-act="qEditCancel">Cancel</button></div></div>';
+        }
+        return '<div class="card"><div class="row"><div class="grow"><b>' + esc(x.name) + '</b><div class="muted">' + esc(x.obj || x.desc) + '</div><div class="muted">' + x.points + ' coins' + (x.vouchers ? ' · ' + x.vouchers + ' tickets' : '') + '</div></div>' +
+          '<button class="btn sm" data-act="qEditOpen" data-id="' + esc(x.id) + '">✏️ Edit</button></div>' +
           '<div class="row" style="margin-top:8px"><div class="seg grow"><button class="' + (open ? 'on' : '') + '" data-act="qStatus" data-id="' + esc(x.id) + '" data-v="OPEN">Open</button><button class="' + (!open ? 'on' : '') + '" data-act="qStatus" data-id="' + esc(x.id) + '" data-v="CLOSED">Closed</button></div>' +
           '<button class="btn sm bad" data-act="qDel" data-id="' + esc(x.id) + '" data-n="' + esc(x.name) + '">Delete</button></div></div>';
       }).join('') : '<div class="empty">No quests yet.</div>');
@@ -777,6 +822,16 @@
       admin('adminAddQuest', { name: name, obj: $('qObj').value.trim(), points: Number($('qPts').value || 0), vouchers: Number($('qVch').value || 0), icon: $('qIcon').value.trim() || '🔥' })
         .then(function () { toast('Quest added and open'); }).catch(function (e) { el.disabled = false; fail(e); });
     },
+    qEditOpen: function (el) { S.qEdit = el.dataset.id; render(); },
+    qEditCancel: function () { delete S.qEdit; render(); },
+    qSave: function (el) {
+      var name = $('eqName').value.trim();
+      if (!name) return toast('Give the quest a name.', true);
+      el.disabled = true;
+      admin('adminUpdateQuest', el.dataset.id, { name: name, obj: $('eqObj').value.trim(), desc: $('eqDesc').value.trim(),
+        points: Number($('eqPts').value || 0), vouchers: Number($('eqVch').value || 0), icon: $('eqIcon').value.trim() || '🔥' })
+        .then(function () { delete S.qEdit; render(); toast('Quest saved'); }).catch(function (e) { el.disabled = false; fail(e); });
+    },
     qStatus: function (el) { admin('adminSetQuestStatus', el.dataset.id, el.dataset.v).then(function () { toast('Quest ' + el.dataset.v.toLowerCase()); }).catch(fail); },
     qDel: function (el) {
       if (!confirm('Delete "' + el.dataset.n + '"?')) return;
@@ -892,7 +947,14 @@
     },
     rwApprove: function (el) {
       el.disabled = true;
-      admin('adminDecideReward', el.dataset.id, 'approve').then(function (r) { toast('Approved: ' + r.member + ' — ' + r.reward); }).catch(function (e) { el.disabled = false; fail(e); });
+      admin('adminDecideReward', el.dataset.id, el.dataset.later ? 'approve later' : 'approve').then(function (r) {
+        toast('Approved: ' + r.member + ' — ' + r.reward + (r.timer ? (r.timer.status === 'running' ? ' · timer started' : ' · timer ready') : ''));
+        if (r.timer) call('getTimers').then(function (t) { setTimers(t); render(); });
+      }).catch(function (e) { el.disabled = false; fail(e); });
+    },
+    tmAct: function (el) {
+      el.disabled = true;
+      call('adminTimer', S.pin, el.dataset.id, el.dataset.a, 5).then(function (r) { setTimers(r); render(); }).catch(function (e) { el.disabled = false; fail(e); });
     },
     rwDeny: function (el) {
       if (!confirm('Deny ' + el.dataset.r + ' for ' + el.dataset.kid + '? Their ' + el.dataset.c + ' coins (and any tickets) go back. This can\'t be undone.')) return;
