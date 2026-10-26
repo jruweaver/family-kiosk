@@ -22,7 +22,7 @@
   [data-theme="HOLIDAY"] { --bg:#10261C; --bg-glow:#163424; --surface:#163224; --surface-2:#1D3E2D; --line:#2F5C44; --text:#FFF8EC; --muted:#C9D8C2; --faint:#8DA58F; --accent:#F2545B; --coin:#F7C948; --flame:#FF8F4D; --ok:#7BD88F; --warn:#F7C948; --danger:#FF6B6B; }
   [data-theme="ARCADE"] { --bg:#120E2A; --bg-glow:#1D1442; --surface:#1A1438; --surface-2:#231B4A; --line:#3B2F75; --text:#F3F0FF; --muted:#B5ACE0; --faint:#7D73AE; --accent:#FF4FD8; --coin:#FFE14D; --flame:#FF7A3D; --ok:#5CFF9D; --warn:#FFE14D; --danger:#FF5C7A; }
 
-  html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text); cursor:none; }
+  html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text); cursor:none; -webkit-text-size-adjust:100%; text-size-adjust:100%; }
   body { font-family:'Atkinson Hyperlegible', system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
   .num { font-variant-numeric: tabular-nums; }
   h1, h2, h3, .display { font-family:'Bricolage Grotesque', 'Atkinson Hyperlegible', sans-serif; margin:0; }
@@ -96,6 +96,24 @@
   .note { font-size:34px; line-height:1.3; white-space:pre-wrap; overflow:hidden; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; }
   .card.note-card { border-color:color-mix(in srgb, var(--coin) 60%, var(--line)); flex:1 1 auto; min-height:0; overflow:hidden; }
 
+  /* 4+ people: smaller cards */
+  #kids.compact .kid { padding:22px 22px; border-radius:26px; }
+  #kids.compact .kid-head { gap:14px; }
+  #kids.compact .avatar { width:68px; height:68px; font-size:34px; }
+  #kids.compact .kid-name { font-size:38px; }
+  #kids.compact .kid-room { font-size:22px; }
+  #kids.compact .stats { font-size:22px; }
+  #kids.compact .bar { height:12px; margin:16px 0 12px; }
+  #kids.compact .count { font-size:24px; margin:-4px 0 6px; }
+  #kids.compact .count b { font-size:30px; }
+  #kids.compact .chore { font-size:26px; gap:12px; padding:5px 2px; }
+  #kids.compact .chore .box { width:32px; height:32px; border-width:3px; font-size:20px; }
+  #kids.compact .chore .ico { width:32px; font-size:26px; }
+  #kids.compact .chore .ico img { width:32px; height:32px; }
+  #kids.compact .chore .w { font-size:20px; }
+  #kids.compact .more { font-size:22px; padding-left:46px; }
+  #kids.compact .banner { font-size:28px; padding:16px 18px; }
+  #kids.compact ul.chores { gap:4px; }
   footer { display:flex; justify-content:space-between; font-size:22px; color:var(--faint); }
   footer .off { color:var(--warn); }
 
@@ -209,7 +227,7 @@
     if (c.completed || c.status === 'completed_by_me') return 'done';
     return c.status; // available | upcoming | expired
   }
-  function kidCard(u, i, rows) {
+  function kidCard(u, i, rows, compact) {
     var t = u.today || {}, p = t.progress || { done: 0, total: 0, percent: 0 };
     var color = u.color || KID_COLORS[i % KID_COLORS.length];
     var list = (t.chores || []).concat(t.weekly || [], t.quests || []);
@@ -217,7 +235,9 @@
     var order = { available: 0, upcoming: 1, expired: 2, done: 3 };
     list = list.slice().sort(function (a, b) { return (order[choreState(a)] || 0) - (order[choreState(b)] || 0); });
     var complete = t.dayComplete && !t.isRestDay;
-    if (complete) rows = Math.min(rows, 6);
+    // Small cards: only what's left (the count shows the rest).
+    if (compact) list = list.filter(function (c) { return choreState(c) !== 'done'; });
+    if (complete) rows = compact ? 0 : Math.min(rows, 6);
     var av = pic(u.profilePicture);
     var html = '<div class="kid' + (complete ? ' complete' : '') + '" style="--kid:' + esc(color) + '">' +
       '<div class="kid-head"><div class="avatar">' + (av ? '<img src="' + esc(av) + '" alt="">' : esc((u.name || '?').charAt(0))) + '</div>' +
@@ -226,7 +246,7 @@
       '<div class="stats num"><div class="coin">🪙 ' + n(u.wallet) + '</div><div class="flame">🔥 ' + n(u.streak) + '</div></div></div>' +
       '<div class="bar"><i style="width:' + (t.isRestDay ? 100 : (p.percent || 0)) + '%"></i></div>';
     if (!t.isRestDay && p.total) html += '<div class="count num"><b>' + p.done + '</b> of ' + p.total + ' done</div>';
-    if (list.length) {
+    if (list.length && rows > 0) {
       var shown = list.slice(0, rows);
       html += '<ul class="chores">' + shown.map(function (c) {
         var st = choreState(c);
@@ -270,12 +290,15 @@
       return t.isRestDay || t.needsSelection || ((t.chores || []).length + (t.weekly || []).length + (t.quests || []).length) > 0;
     });
     if (!people.length) people = d.users || [];
-    var cols = Math.min(Math.max(people.length, 1), 3);
-    var kidRows = Math.ceil(people.length / cols) || 1;
+    var cnt = Math.max(people.length, 1);
+    var cols = cnt <= 3 ? cnt : cnt === 4 ? 2 : 3;
+    var kidRows = Math.ceil(cnt / cols);
+    var compact = kidRows > 1;
+    $('kids').classList.toggle('compact', compact);
     $('kids').style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
     $('kids').style.gridTemplateRows = 'repeat(' + kidRows + ', 1fr)';
-    var rows = kidRows > 1 ? 3 : 9;
-    $('kids').innerHTML = people.map(function (u) { return kidCard(u, (d.users || []).indexOf(u), rows); }).join('');
+    var rows = compact ? 4 : 9;
+    $('kids').innerHTML = people.map(function (u) { return kidCard(u, (d.users || []).indexOf(u), rows, compact); }).join('');
 
     // Side panel: today → coming up → meal → message board.
     var today = now().key, side = '';
@@ -331,6 +354,11 @@
   function drift() { $('stage').style.translate = Math.round(Math.random() * 24 - 12) + 'px ' + Math.round(Math.random() * 16 - 8) + 'px'; }
 
   function demoData() {
+    var d = demoBase();
+    if (q.get('people')) { var k = +q.get('people'); var src = d.users.slice(); for (var i = 2; i < k; i++) { var u = JSON.parse(JSON.stringify(src[i % 2])); u.name = ['Mom', 'Dad', 'Sam', 'Ava'][i - 2]; d.users.push(u); } }
+    return d;
+  }
+  function demoBase() {
     var t = now().key;
     function ch(task, ico, done, st) { return { id: task, task: task, icon: ico, completed: !!done, status: st || 'available' }; }
     return {
