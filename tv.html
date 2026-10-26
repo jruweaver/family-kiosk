@@ -28,6 +28,7 @@
   h1, h2, h3, .display { font-family:'Bricolage Grotesque', 'Atkinson Hyperlegible', sans-serif; margin:0; }
 
   /* Designed at 1920×1080 and scaled to whatever the TV reports. */
+  #wrap { position:fixed; left:0; top:0; width:100vw; height:100vh; overflow:hidden; }
   #stage { position:absolute; left:0; top:0; width:1920px; height:1080px; transform-origin:0 0;
     background: radial-gradient(1200px 700px at 15% -10%, var(--bg-glow), transparent 70%), var(--bg);
     padding:44px 72px 36px; box-sizing:border-box; display:grid; grid-template-rows:auto 1fr auto; gap:28px;
@@ -125,7 +126,7 @@
 </style>
 </head>
 <body>
-<div id="stage">
+<div id="wrap"><div id="stage">
   <header>
     <div><div class="clock num" id="clock"></div><div class="date" id="date"></div></div>
     <div class="weather num" id="weather"></div>
@@ -136,7 +137,7 @@
   </main>
   <footer><span id="hint"></span><span id="updated"></span></footer>
   <div id="msg"><div><h2 id="msgTitle"></h2><p id="msgText"></p></div></div>
-</div>
+</div></div>
 <script>
 (function () {
   'use strict';
@@ -322,7 +323,7 @@
 
     var t = new Date(S.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz() });
     $('updated').innerHTML = S.offline ? '<span class="off">⚠ Offline — showing ' + esc(t) + ' data</span>' : 'Updated ' + esc(t);
-    $('hint').textContent = SAVER ? '' : 'Press Back to close';
+    if (q.get('debug') !== '1') $('hint').textContent = SAVER ? '' : 'Press Back to close';
     hideMsg();
   }
 
@@ -344,12 +345,23 @@
   }
 
   /* ---------- fit 1920×1080 to the screen; drift in screensaver mode ---------- */
+  /* Some TV web views report the page's own 1920px width as the window width,
+     so take the smallest believable size from every source. */
+  function viewSize() {
+    var W = [innerWidth, document.documentElement.clientWidth, screen.width, window.visualViewport && visualViewport.width];
+    var H = [innerHeight, document.documentElement.clientHeight, screen.height, window.visualViewport && visualViewport.height];
+    function pick(a) { a = a.filter(function (v) { return v > 100; }); return a.length ? Math.min.apply(null, a) : 0; }
+    return { w: pick(W), h: pick(H) };
+  }
   function fit() {
-    var k = Math.min(innerWidth / 1920, innerHeight / 1080);
+    var v = viewSize();
+    if (!v.w || !v.h) return setTimeout(fit, 200);
+    var k = Math.min(v.w / 1920, v.h / 1080);
+    if (q.get('debug') === '1') $('hint').textContent = 'inner ' + innerWidth + '×' + innerHeight + ' client ' + document.documentElement.clientWidth + ' screen ' + screen.width + '×' + screen.height + ' dpr ' + devicePixelRatio + ' k ' + k.toFixed(3);
     var st = $('stage');
     st.style.transform = 'scale(' + k + ')';
-    st.style.left = ((innerWidth - 1920 * k) / 2) + 'px';
-    st.style.top = ((innerHeight - 1080 * k) / 2) + 'px';
+    st.style.left = ((v.w - 1920 * k) / 2) + 'px';
+    st.style.top = ((v.h - 1080 * k) / 2) + 'px';
   }
   function drift() { $('stage').style.translate = Math.round(Math.random() * 24 - 12) + 'px ' + Math.round(Math.random() * 16 - 8) + 'px'; }
 
@@ -378,6 +390,7 @@
 
   addEventListener('resize', fit);
   fit();
+  setTimeout(fit, 500); setTimeout(fit, 2000);
   var snap = load(SNAP_KEY);
   if (snap && snap.data && !DEMO) { S.data = snap.data; S.at = snap.at; }
   clockTick();
