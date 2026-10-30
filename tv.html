@@ -96,6 +96,25 @@
   .meal b { color:var(--text); }
   .note { font-size:34px; line-height:1.3; white-space:pre-wrap; overflow:hidden; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; }
   .card.note-card { border-color:color-mix(in srgb, var(--coin) 60%, var(--line)); flex:1 1 auto; min-height:0; overflow:hidden; }
+  .card.tm-card { border-color:color-mix(in srgb, var(--accent) 70%, var(--line)); background:color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  .card.tm-card h3 { color:var(--accent); }
+  .tmr-row { display:flex; gap:14px; align-items:baseline; padding:4px 0; font-size:30px; }
+  .tmr-row .who { flex:none; font-weight:800; }
+  .tmr-row .what { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-size:26px; }
+  .tmr-row .left { flex:none; font:800 44px 'Bricolage Grotesque', sans-serif; font-variant-numeric:tabular-nums; color:var(--text); }
+  .tmr-row.soon .left { color:var(--warn); }
+  .tmr-row.done .left { color:var(--danger); font-size:34px; }
+  .tmr-row.paused .left, .tmr-row.ready .left { color:var(--muted); font-size:30px; }
+  aside.dense { gap:12px; }
+  aside.dense .card { padding:14px 22px; border-radius:24px; }
+  aside.dense .card h3 { font-size:21px; margin-bottom:6px; }
+  aside.dense .ev, aside.dense .rw { font-size:27px; padding:2px 0; }
+  aside.dense .ev .tm { font-size:24px; width:118px; }
+  aside.dense .tmr-row { font-size:27px; padding:2px 0; }
+  aside.dense .tmr-row .left { font-size:36px; }
+  aside.dense .meal { font-size:26px; margin-top:8px; padding-top:8px; }
+  aside.dense .empty { font-size:24px; }
+  .cd-line { font-size:30px; } .cd-line b { color:var(--accent); }
   .card.rw-card { border-color:color-mix(in srgb, var(--warn) 70%, var(--line)); background:color-mix(in srgb, var(--warn) 8%, var(--surface)); }
   .card.rw-card h3 { color:var(--warn); }
   .rw { display:flex; gap:14px; font-size:30px; padding:4px 0; align-items:baseline; }
@@ -309,19 +328,20 @@
     var rows = compact ? 3 : 9;
     $('kids').innerHTML = people.map(function (u) { return kidCard(u, (d.users || []).indexOf(u), rows, compact); }).join('');
 
-    // Side panel: today → coming up → meal → message board.
-    var today = now().key, side = '';
+    // Side panel: timers → today → coming up → waiting rewards → message board.
+    var today = now().key, side = timersCard(d);
     var meal = currentMeal();
     var evs = (d.events || []).filter(function (e) { return e.startStr <= today && e.endStr >= today; });
-    side += '<div class="card"><h3>Today</h3>' + (evs.length ? evs.slice(0, 5).map(function (e) {
+    side += '<div class="card today-card" data-total="' + evs.length + '"><h3>Today</h3>' + (evs.length ? evs.slice(0, 5).map(function (e) {
       return '<div class="ev" style="--evc:' + esc(e.color || '') + '"><span class="dot"></span><span class="tm">' + (e.allDay ? 'All day' : esc(String(e.timeLabel || '').replace(':00 ', ' '))) + '</span><span class="tt">' + esc(e.title) + '</span></div>';
-    }).join('') + (evs.length > 5 ? '<div class="empty">+' + (evs.length - 5) + ' more</div>' : '') : '<div class="empty">Nothing on the calendar</div>') +
+    }).join('') + (evs.length > 5 ? '<div class="empty more">+' + (evs.length - 5) + ' more</div>' : '') : '<div class="empty">Nothing on the calendar</div>') +
       (meal ? '<div class="meal">🍽️ ' + esc(meal.label) + ': <b>' + esc(meal.text) + '</b></div>' : '') + '</div>';
 
     var cds = (d.countdowns || []).filter(function (c) { return c.daysUntil >= 0; });
     if (cds.length) {
       var c = cds[0];
-      side += '<div class="card"><h3>Coming up</h3><div class="cd"><div class="big num">' + (c.daysUntil === 0 ? 'Today' : c.daysUntil + '<small>' + (c.daysUntil === 1 ? 'day' : 'days') + '</small>') + '</div>' +
+      var cdLine = '<b class="num">' + (c.daysUntil === 0 ? 'Today' : c.daysUntil === 1 ? '1 day' : c.daysUntil + ' days') + '</b> · ' + esc(c.name);
+      side += '<div class="card cd-card" data-line="' + esc(cdLine) + '"><h3>Coming up</h3><div class="cd"><div class="big num">' + (c.daysUntil === 0 ? 'Today' : c.daysUntil + '<small>' + (c.daysUntil === 1 ? 'day' : 'days') + '</small>') + '</div>' +
         '<div style="min-width:0"><div class="nm">' + esc(c.name) + '</div><div class="dt">' + esc(prettyDate(c.dateStr, { weekday: 'long', month: 'short', day: 'numeric' })) + '</div></div></div>' +
         cds.slice(1, 3).map(function (x) { return '<div class="cd-next"><b class="num">' + (x.daysUntil === 1 ? 'Tomorrow' : x.daysUntil + ' days') + '</b> · ' + esc(x.name) + '</div>'; }).join('') + '</div>';
     }
@@ -335,19 +355,57 @@
     }
     if (waiting.length) {
       var maxRw = String(s.bulletin || '').trim() ? 3 : 5;
-      side += '<div class="card rw-card"><h3>🎁 Waiting for approval · ' + waiting.length + '</h3>' + waiting.slice(0, maxRw).map(function (r) {
+      side += '<div class="card rw-card" data-total="' + waiting.length + '"><h3>🎁 Waiting for approval · ' + waiting.length + '</h3>' + waiting.slice(0, maxRw).map(function (r) {
         return '<div class="rw"><span class="who">' + esc(r.member) + '</span><span class="what">' + esc(r.reward) + (r.secret ? ' 🔐' : '') + '</span><span class="when">' + esc(r.when || '') + '</span></div>';
-      }).join('') + (waiting.length > maxRw ? '<div class="empty">+' + (waiting.length - maxRw) + ' more</div>' : '') + '</div>';
+      }).join('') + (waiting.length > maxRw ? '<div class="empty more">+' + (waiting.length - maxRw) + ' more</div>' : '') + '</div>';
     }
     var note = String(s.bulletin || '').trim();
     if (note) side += '<div class="card note-card"><h3>📌 Message board</h3><div class="note">' + esc(note) + '</div></div>';
     $('side').innerHTML = side;
+    fitSide();
     fitNote();
 
     var t = new Date(S.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz() });
     $('updated').innerHTML = S.offline ? '<span class="off">⚠ Offline — showing ' + esc(t) + ' data</span>' : 'Updated ' + esc(t);
     if (q.get('debug') !== '1') $('hint').textContent = SAVER ? '' : 'Press Back to close';
     hideMsg();
+  }
+
+  /* Right column too full (timers + rewards + events + note): trim the least important lines first. */
+  function trimRows(sel, rowSel, keep) {
+    var card = document.querySelector(sel);
+    if (!card) return;
+    var rows = card.querySelectorAll(rowSel);
+    if (rows.length <= keep) return;
+    for (var i = keep; i < rows.length; i++) rows[i].parentNode.removeChild(rows[i]);
+    var total = +card.dataset.total || rows.length;
+    var more = card.querySelector('.more');
+    if (!more) { more = document.createElement('div'); more.className = 'empty more'; card.appendChild(more); }
+    more.textContent = '+' + (total - keep) + ' more';
+  }
+  function fitSide() {
+    var side = $('side');
+    function fits() {
+      var note = side.querySelector('.note-card');
+      return side.scrollHeight <= side.clientHeight + 1 && (!note || note.clientHeight >= 120);
+    }
+    side.classList.remove('dense');
+    var steps = [
+      function () { Array.prototype.forEach.call(side.querySelectorAll('.cd-next'), function (x) { x.parentNode.removeChild(x); }); },
+      function () { side.classList.add('dense'); },
+      function () {
+        // "Coming up" as one line: "1 day · Trick or Treat!"
+        var cd = side.querySelector('.cd-card');
+        if (cd && cd.dataset.line) cd.innerHTML = '<h3>Coming up</h3><div class="cd-line">' + cd.dataset.line + '</div>';
+      },
+      function () { trimRows('.rw-card', '.rw', 2); },
+      function () { trimRows('.today-card', '.ev', 2); },
+      function () { trimRows('.tm-card', '.tmr-row', 3); },
+      function () { trimRows('.rw-card', '.rw', 1); },
+      function () { trimRows('.today-card', '.ev', 1); },
+      function () { trimRows('.tm-card', '.tmr-row', 2); }
+    ];
+    for (var i = 0; i < steps.length && !fits(); i++) steps[i]();
   }
 
   /* Message board: as many whole lines as the space left over allows (never a half-cut line). */
@@ -370,6 +428,49 @@
         break;
       }
     }
+  }
+
+  /* ---------- reward timers (e.g. screen time) — the kiosk rings; the TV just shows them ---------- */
+  function timerSkew(d) { return d.timers && d.timers.now ? d.timers.now - S.at : 0; }
+  function tmLeft(t) {
+    if (t.status === 'running') return t.endMs - (Date.now() + S.skew);
+    if (t.status === 'done') return 0;
+    return t.remainingMs || t.minutes * 60000;
+  }
+  function tmState(t) { return t.status === 'running' && tmLeft(t) <= 0 ? 'done' : t.status; }
+  function tmFmt(ms) {
+    var sec = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+    return (h ? h + ':' + pad(m) : m) + ':' + pad(x);
+  }
+  function tmText(t) {
+    var st = tmState(t);
+    return st === 'done' ? 'Time\'s up' : st === 'ready' ? 'Ready · ' + t.minutes + ' min' : st === 'paused' ? 'Paused · ' + tmFmt(tmLeft(t)) : tmFmt(tmLeft(t));
+  }
+  function tmClass(t) {
+    var st = tmState(t);
+    return 'tmr-row ' + st + (st === 'running' && tmLeft(t) < 5 * 60000 ? ' soon' : '');
+  }
+  function timersCard(d) {
+    S.skew = timerSkew(d);
+    var list = ((d.timers && d.timers.timers) || []).filter(function (t) { return t.status !== 'stopped'; });
+    if (!list.length) return '';
+    var order = { running: 0, done: 1, paused: 2, ready: 3 };
+    list = list.slice().sort(function (a, b) { return (order[tmState(a)] || 0) - (order[tmState(b)] || 0); });
+    return '<div class="card tm-card" data-total="' + list.length + '"><h3>⏱ Timers</h3>' + list.slice(0, 4).map(function (t) {
+      return '<div class="' + tmClass(t) + '" data-tmr="' + esc(t.id) + '"><span class="who">' + esc(t.member) + '</span><span class="what">' + esc(t.reward) + '</span>' +
+        '<span class="left">' + esc(tmText(t)) + '</span></div>';
+    }).join('') + (list.length > 4 ? '<div class="empty more">+' + (list.length - 4) + ' more</div>' : '') + '</div>';
+  }
+  /* Every second: just the countdown numbers (the rest redraws on the 2-minute refresh). */
+  function timerTick() {
+    if (!S.data || !S.data.timers) return;
+    var list = S.data.timers.timers || [];
+    Array.prototype.forEach.call(document.querySelectorAll('[data-tmr]'), function (row) {
+      var t = list.filter(function (x) { return x.id === row.dataset.tmr; })[0];
+      if (!t) return;
+      row.className = tmClass(t);
+      row.querySelector('.left').textContent = tmText(t);
+    });
   }
 
   function showMsg(title, text) { $('msgTitle').textContent = title; $('msgText').textContent = text; $('msg').classList.add('on'); }
@@ -430,7 +531,10 @@
       events: [ { startStr: t, endStr: t, timeLabel: '3:30 PM', title: 'Soccer practice', color: '#5EC8FF' }, { startStr: t, endStr: t, timeLabel: '6:00 PM', title: 'Family dinner', color: '#FFD166' } ],
       countdowns: [ { name: 'Thanksgiving', dateStr: '2026-11-26', daysUntil: 31 }, { name: 'Noah\'s birthday', dateStr: '2026-12-02', daysUntil: 37 } ],
       meals: { today: { meals: { Dinner: 'Tacos 🌮' } } },
-      pendingRewards: [ { member: 'Madi', reward: '30 Minutes Screen Time', when: '4:12 PM' }, { member: 'Noah', reward: 'Candy', when: 'Thu, Oct 29' } ]
+      pendingRewards: [ { member: 'Madi', reward: '30 Minutes Screen Time', when: '4:12 PM' }, { member: 'Noah', reward: 'Candy', when: 'Thu, Oct 29' } ],
+      timers: { now: Date.now(), timers: [
+        { id: 'd1', member: 'Noah', reward: '30 Minutes Screen Time', minutes: 30, status: 'running', endMs: Date.now() + 23 * 60000 + 15000 },
+        { id: 'd2', member: 'Madi', reward: '60 Minutes Screen Time', minutes: 60, status: 'ready', remainingMs: 3600000 } ] }
     };
   }
 
@@ -443,6 +547,7 @@
   render();
   refresh();
   setInterval(clockTick, 15000);
+  setInterval(timerTick, 1000);
   setInterval(refresh, REFRESH_MS);
   if (SAVER) setInterval(drift, 120000);
 })();
