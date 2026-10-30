@@ -96,6 +96,12 @@
   .meal b { color:var(--text); }
   .note { font-size:34px; line-height:1.3; white-space:pre-wrap; overflow:hidden; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; }
   .card.note-card { border-color:color-mix(in srgb, var(--coin) 60%, var(--line)); flex:1 1 auto; min-height:0; overflow:hidden; }
+  .card.rw-card { border-color:color-mix(in srgb, var(--warn) 70%, var(--line)); background:color-mix(in srgb, var(--warn) 8%, var(--surface)); }
+  .card.rw-card h3 { color:var(--warn); }
+  .rw { display:flex; gap:14px; font-size:30px; padding:4px 0; align-items:baseline; }
+  .rw .who { flex:none; font-weight:800; }
+  .rw .what { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rw .when { flex:none; font-size:24px; color:var(--muted); }
 
   /* 4+ people: smaller cards */
   #kids.compact .kid { padding:22px 22px; border-radius:26px; }
@@ -226,6 +232,7 @@
   /* ---------- render ---------- */
   function choreState(c) {
     if (c.completed || c.status === 'completed_by_me') return 'done';
+    if (c.teamState) return 'team'; // a teammate did it: "did you help?" is answered on the kiosk
     return c.status; // available | upcoming | expired
   }
   function kidCard(u, i, rows, compact) {
@@ -233,9 +240,9 @@
     var color = u.color || KID_COLORS[i % KID_COLORS.length];
     var list = (t.chores || []).concat(t.weekly || [], t.quests || []);
     // To-do first, then later/missed, then done — what's left is what matters from the couch.
-    var order = { available: 0, upcoming: 1, expired: 2, done: 3 };
+    var order = { available: 0, upcoming: 1, expired: 2, team: 3, done: 4 };
     list = list.slice().sort(function (a, b) { return (order[choreState(a)] || 0) - (order[choreState(b)] || 0); });
-    var complete = t.dayComplete && !t.isRestDay;
+    var complete = t.dayComplete && !t.isRestDay && (!p.total || p.done >= p.total);
     // Small cards: only what's left (the count shows the rest).
     if (compact) list = list.filter(function (c) { return choreState(c) !== 'done'; });
     if (complete) rows = compact ? 0 : Math.min(rows, 6);
@@ -251,8 +258,9 @@
       var shown = list.slice(0, rows);
       html += '<ul class="chores">' + shown.map(function (c) {
         var st = choreState(c);
-        var w = st === 'upcoming' ? (c.availabilityLabel || 'Later') : st === 'expired' ? 'Missed' : '';
-        return '<li class="chore ' + (st === 'done' ? 'done' : st === 'upcoming' ? 'locked' : st === 'expired' ? 'missed' : '') + '">' +
+        var w = st === 'upcoming' ? (c.availabilityLabel || 'Later') : st === 'expired' ? 'Missed'
+          : st === 'team' ? '🤝 ' + (c.teamDoneBy || 'Team') + (c.teamState === 'declined' ? ' did it' : ' did it · helped?') : '';
+        return '<li class="chore ' + (st === 'done' ? 'done' : st === 'upcoming' || st === 'team' ? 'locked' : st === 'expired' ? 'missed' : '') + '">' +
           '<span class="box">' + (st === 'done' ? '✓' : '') + '</span><span class="ico">' + icon(c.icon, '🧹') + '</span>' +
           '<span class="t">' + esc(c.task) + '</span>' + (w ? '<span class="w">' + esc(w) + '</span>' : '') + '</li>';
       }).join('') + '</ul>';
@@ -298,7 +306,7 @@
     $('kids').classList.toggle('compact', compact);
     $('kids').style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
     $('kids').style.gridTemplateRows = 'repeat(' + kidRows + ', 1fr)';
-    var rows = compact ? 4 : 9;
+    var rows = compact ? 3 : 9;
     $('kids').innerHTML = people.map(function (u) { return kidCard(u, (d.users || []).indexOf(u), rows, compact); }).join('');
 
     // Side panel: today → coming up → meal → message board.
@@ -317,14 +325,51 @@
         '<div style="min-width:0"><div class="nm">' + esc(c.name) + '</div><div class="dt">' + esc(prettyDate(c.dateStr, { weekday: 'long', month: 'short', day: 'numeric' })) + '</div></div></div>' +
         cds.slice(1, 3).map(function (x) { return '<div class="cd-next"><b class="num">' + (x.daysUntil === 1 ? 'Tomorrow' : x.daysUntil + ' days') + '</b> · ' + esc(x.name) + '</div>'; }).join('') + '</div>';
     }
+    // Rewards waiting for a parent to approve (newer backends send the list; older ones: from each statement).
+    var waiting = d.pendingRewards;
+    if (!waiting) {
+      waiting = [];
+      (d.users || []).forEach(function (u) {
+        (u.recentTransactions || []).forEach(function (t) { if (t.status === 'pending') waiting.push({ member: u.name, reward: t.description, when: t.date }); });
+      });
+    }
+    if (waiting.length) {
+      var maxRw = String(s.bulletin || '').trim() ? 3 : 5;
+      side += '<div class="card rw-card"><h3>🎁 Waiting for approval · ' + waiting.length + '</h3>' + waiting.slice(0, maxRw).map(function (r) {
+        return '<div class="rw"><span class="who">' + esc(r.member) + '</span><span class="what">' + esc(r.reward) + (r.secret ? ' 🔐' : '') + '</span><span class="when">' + esc(r.when || '') + '</span></div>';
+      }).join('') + (waiting.length > maxRw ? '<div class="empty">+' + (waiting.length - maxRw) + ' more</div>' : '') + '</div>';
+    }
     var note = String(s.bulletin || '').trim();
     if (note) side += '<div class="card note-card"><h3>📌 Message board</h3><div class="note">' + esc(note) + '</div></div>';
     $('side').innerHTML = side;
+    fitNote();
 
     var t = new Date(S.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: tz() });
     $('updated').innerHTML = S.offline ? '<span class="off">⚠ Offline — showing ' + esc(t) + ' data</span>' : 'Updated ' + esc(t);
     if (q.get('debug') !== '1') $('hint').textContent = SAVER ? '' : 'Press Back to close';
     hideMsg();
+  }
+
+  /* Message board: as many whole lines as the space left over allows (never a half-cut line). */
+  function fitNote() {
+    var card = document.querySelector('.note-card');
+    if (!card) return;
+    var note = card.querySelector('.note');
+    var room = card.clientHeight - card.querySelector('h3').offsetHeight - 50;
+    var sizes = [34, 30, 26, 22];
+    for (var i = 0; i < sizes.length; i++) {
+      // Smaller text before cutting the message off: stop at the first size where it all fits.
+      note.style.fontSize = sizes[i] + 'px';
+      note.style.webkitLineClamp = 'unset'; note.style.maxHeight = 'none';
+      var lh = sizes[i] * 1.3;
+      var need = Math.round(note.scrollHeight / lh);
+      var lines = Math.max(1, Math.min(4, Math.floor(room / lh)));
+      if (need <= lines || i === sizes.length - 1) {
+        note.style.webkitLineClamp = String(lines);
+        note.style.maxHeight = (lines * lh) + 'px';
+        break;
+      }
+    }
   }
 
   function showMsg(title, text) { $('msgTitle').textContent = title; $('msgText').textContent = text; $('msg').classList.add('on'); }
@@ -384,7 +429,8 @@
       ],
       events: [ { startStr: t, endStr: t, timeLabel: '3:30 PM', title: 'Soccer practice', color: '#5EC8FF' }, { startStr: t, endStr: t, timeLabel: '6:00 PM', title: 'Family dinner', color: '#FFD166' } ],
       countdowns: [ { name: 'Thanksgiving', dateStr: '2026-11-26', daysUntil: 31 }, { name: 'Noah\'s birthday', dateStr: '2026-12-02', daysUntil: 37 } ],
-      meals: { today: { meals: { Dinner: 'Tacos 🌮' } } }
+      meals: { today: { meals: { Dinner: 'Tacos 🌮' } } },
+      pendingRewards: [ { member: 'Madi', reward: '30 Minutes Screen Time', when: '4:12 PM' }, { member: 'Noah', reward: 'Candy', when: 'Thu, Oct 29' } ]
     };
   }
 
